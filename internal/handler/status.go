@@ -292,56 +292,106 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
-		// Fallback OS detection
-		if _, ok := osInfo["distro"]; !ok {
-			distro := runCmd("bash", "-c", `cat /etc/os-release 2>/dev/null | grep "^PRETTY_NAME=" | cut -d= -f2 | tr -d '"'`)
-			if distro != "" {
-				osInfo["distro"] = distro
+		// Fallback OS detection (platform-aware)
+		if runtime.GOOS == "windows" {
+			// Windows: use PowerShell for system info
+			if _, ok := osInfo["distro"]; !ok {
+				distro := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_OperatingSystem).Caption`)
+				if distro != "" {
+					osInfo["distro"] = distro
+				}
 			}
-		}
-		if _, ok := osInfo["release"]; !ok {
-			release := runCmd("uname", "-r")
-			if release != "" {
-				osInfo["release"] = release
+			if _, ok := osInfo["release"]; !ok {
+				release := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_OperatingSystem).Version`)
+				if release != "" {
+					osInfo["release"] = release
+				}
 			}
-		}
-
-		// User info
-		userInfo := runCmd("whoami")
-		if userInfo != "" {
-			osInfo["userInfo"] = userInfo
-		}
-
-		// Memory info (from /proc/meminfo, locale-independent)
-		totalMem := runCmd("bash", "-c", `awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null`)
-		freeMem := runCmd("bash", "-c", `awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null`)
-		if totalMem != "" {
-			if v, err := strconv.Atoi(totalMem); err == nil {
-				osInfo["totalMemMB"] = v
+			// Kernel version
+			kernel := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_OperatingSystem).BuildNumber`)
+			if kernel != "" {
+				osInfo["kernel"] = "Build " + kernel
 			}
-		}
-		if freeMem != "" {
-			if v, err := strconv.Atoi(freeMem); err == nil {
-				osInfo["freeMemMB"] = v
+			// User info
+			userInfo := runCmd("whoami")
+			if userInfo != "" {
+				osInfo["userInfo"] = userInfo
 			}
-		}
-
-		// CPU model
-		cpuModel := runCmd("bash", "-c", `cat /proc/cpuinfo 2>/dev/null | grep "model name" | head -1 | cut -d: -f2`)
-		if cpuModel != "" {
-			osInfo["cpuModel"] = strings.TrimSpace(cpuModel)
-		}
-
-		// Uptime
-		uptimeStr := runCmd("bash", "-c", `cat /proc/uptime 2>/dev/null | awk '{printf "%d", $1}'`)
-		if uptimeStr != "" {
-			osInfo["uptime"] = uptimeStr
-		}
-
-		// Load average
-		loadAvg := runCmd("bash", "-c", `cat /proc/loadavg 2>/dev/null | awk '{print $1", "$2", "$3}'`)
-		if loadAvg != "" {
-			osInfo["loadAvg"] = loadAvg
+			// Memory info via PowerShell
+			totalMem := runCmd("powershell", "-NoProfile", "-Command", `[math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB)`)
+			freeMem := runCmd("powershell", "-NoProfile", "-Command", `[math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1KB)`)
+			if totalMem != "" {
+				if v, err := strconv.Atoi(totalMem); err == nil {
+					osInfo["totalMemMB"] = v
+				}
+			}
+			if freeMem != "" {
+				if v, err := strconv.Atoi(freeMem); err == nil {
+					osInfo["freeMemMB"] = v
+				}
+			}
+			// CPU model
+			cpuModel := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_Processor | Select-Object -First 1).Name`)
+			if cpuModel != "" {
+				osInfo["cpuModel"] = strings.TrimSpace(cpuModel)
+			}
+			// Uptime (seconds)
+			uptimeStr := runCmd("powershell", "-NoProfile", "-Command", `[math]::Round((Get-CimInstance Win32_OperatingSystem | ForEach-Object { (Get-Date) - $_.LastBootUpTime }).TotalSeconds)`)
+			if uptimeStr != "" {
+				osInfo["uptime"] = uptimeStr
+			}
+			// CPU usage as load average approximation
+			cpuLoad := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average`)
+			if cpuLoad != "" {
+				osInfo["loadAvg"] = cpuLoad + "%"
+			}
+		} else {
+			// Linux/macOS: use bash and /proc/
+			if _, ok := osInfo["distro"]; !ok {
+				distro := runCmd("bash", "-c", `cat /etc/os-release 2>/dev/null | grep "^PRETTY_NAME=" | cut -d= -f2 | tr -d '"'`)
+				if distro != "" {
+					osInfo["distro"] = distro
+				}
+			}
+			if _, ok := osInfo["release"]; !ok {
+				release := runCmd("uname", "-r")
+				if release != "" {
+					osInfo["release"] = release
+				}
+			}
+			// User info
+			userInfo := runCmd("whoami")
+			if userInfo != "" {
+				osInfo["userInfo"] = userInfo
+			}
+			// Memory info (from /proc/meminfo, locale-independent)
+			totalMem := runCmd("bash", "-c", `awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null`)
+			freeMem := runCmd("bash", "-c", `awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null`)
+			if totalMem != "" {
+				if v, err := strconv.Atoi(totalMem); err == nil {
+					osInfo["totalMemMB"] = v
+				}
+			}
+			if freeMem != "" {
+				if v, err := strconv.Atoi(freeMem); err == nil {
+					osInfo["freeMemMB"] = v
+				}
+			}
+			// CPU model
+			cpuModel := runCmd("bash", "-c", `cat /proc/cpuinfo 2>/dev/null | grep "model name" | head -1 | cut -d: -f2`)
+			if cpuModel != "" {
+				osInfo["cpuModel"] = strings.TrimSpace(cpuModel)
+			}
+			// Uptime
+			uptimeStr := runCmd("bash", "-c", `cat /proc/uptime 2>/dev/null | awk '{printf "%d", $1}'`)
+			if uptimeStr != "" {
+				osInfo["uptime"] = uptimeStr
+			}
+			// Load average
+			loadAvg := runCmd("bash", "-c", `cat /proc/loadavg 2>/dev/null | awk '{print $1", "$2", "$3}'`)
+			if loadAvg != "" {
+				osInfo["loadAvg"] = loadAvg
+			}
 		}
 
 		// Software detection

@@ -223,6 +223,18 @@ func detectOpenClawVersion(cfg *config.Config) string {
 			filepath.Join(home, "AppData", "Roaming", "npm", "openclaw.cmd"),
 			`C:\Program Files\nodejs\openclaw.cmd`,
 		)
+		// SYSTEM account path (when running as Windows service)
+		systemRoot := os.Getenv("SYSTEMROOT")
+		if systemRoot != "" {
+			commonPaths = append(commonPaths,
+				filepath.Join(systemRoot, "system32", "config", "systemprofile", "AppData", "Roaming", "npm", "openclaw.cmd"),
+			)
+		}
+		// npm prefix path
+		npmPrefix := detectCmd("npm", "config", "get", "prefix")
+		if npmPrefix != "" {
+			commonPaths = append(commonPaths, filepath.Join(npmPrefix, "openclaw.cmd"))
+		}
 	}
 	for _, p := range commonPaths {
 		if _, err := os.Stat(p); err == nil {
@@ -646,18 +658,68 @@ echo "✅ $(python3 --version) 安装完成"
 			taskName = "安装 OpenClaw"
 			if runtime.GOOS == "windows" {
 				script = `
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 Write-Output "📦 安装 OpenClaw..."
 $nodeCheck = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCheck) {
   Write-Output "❌ 需要先安装 Node.js"
   exit 1
 }
+
+# Configure npm to use Chinese mirror for faster downloads
+Write-Output "📝 配置 npm 镜像源..."
+npm config set registry https://registry.npmmirror.com 2>$null
+
+# Ensure npm global prefix is set to user-accessible path
+$npmPrefix = npm config get prefix 2>$null
+Write-Output "📁 npm 全局安装目录: $npmPrefix"
+
 Write-Output "📥 正在通过 npm 安装 OpenClaw..."
-npm install -g openclaw@latest --registry=https://registry.npmmirror.com
-Write-Output "✅ OpenClaw 安装完成"
+npm install -g openclaw@latest --registry=https://registry.npmmirror.com 2>&1
+if ($LASTEXITCODE -ne 0) {
+  Write-Output "⚠️ 首次安装失败 (exit code: $LASTEXITCODE)，正在重试..."
+  # Retry with force flag
+  npm install -g openclaw@latest --registry=https://registry.npmmirror.com --force 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "❌ OpenClaw 安装失败，请检查网络连接或手动运行: npm install -g openclaw@latest"
+    exit 1
+  }
+}
+
+# Refresh PATH so we can find openclaw.cmd
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+# Also add npm global bin to PATH
+if ($npmPrefix -and (Test-Path $npmPrefix)) {
+  $env:Path = "$npmPrefix;$env:Path"
+}
+
+# Verify installation
+$ocCmd = Get-Command openclaw -ErrorAction SilentlyContinue
+if ($ocCmd) {
+  $ocVer = & openclaw --version 2>$null
+  Write-Output "✅ OpenClaw $ocVer 安装完成"
+} else {
+  # Check common locations
+  $possiblePaths = @(
+    (Join-Path $npmPrefix "openclaw.cmd"),
+    (Join-Path $env:APPDATA "npm\openclaw.cmd"),
+    "C:\Program Files\nodejs\openclaw.cmd"
+  )
+  $found = $false
+  foreach ($p in $possiblePaths) {
+    if (Test-Path $p) {
+      Write-Output "✅ OpenClaw 安装完成 (位置: $p)"
+      $found = $true
+      break
+    }
+  }
+  if (-not $found) {
+    Write-Output "⚠️ npm 安装完成但未找到 openclaw 命令，可能需要重启面板"
+  }
+}
+
 Write-Output "📝 初始化配置..."
-try { openclaw init } catch { Write-Output "初始化跳过（可能已存在配置）" }
+try { openclaw init 2>$null } catch { Write-Output "初始化跳过（可能已存在配置）" }
 Write-Output "✅ 全部完成"
 `
 			} else {

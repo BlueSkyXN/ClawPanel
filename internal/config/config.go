@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -207,12 +208,28 @@ func (c *Config) OpenClawInstalled() bool {
 	if p, err := exec.LookPath("openclaw"); err == nil && p != "" {
 		return true
 	}
-	// 3. Windows: 检查 npm 全局目录
+	// 3. Windows: 检查 npm 全局目录（包括普通用户和 SYSTEM 账户）
 	if runtime.GOOS == "windows" {
 		home, _ := os.UserHomeDir()
 		winPaths := []string{
 			filepath.Join(home, "AppData", "Roaming", "npm", "openclaw.cmd"),
 			filepath.Join(home, "AppData", "Roaming", "npm", "openclaw"),
+		}
+		// Also check SYSTEM account paths (when running as Windows service)
+		systemProfile := os.Getenv("SYSTEMROOT")
+		if systemProfile != "" {
+			winPaths = append(winPaths,
+				filepath.Join(systemProfile, "system32", "config", "systemprofile", "AppData", "Roaming", "npm", "openclaw.cmd"),
+			)
+		}
+		// Check Program Files nodejs path
+		winPaths = append(winPaths, `C:\Program Files\nodejs\openclaw.cmd`)
+		// Check npm prefix path
+		if out, err := exec.Command("npm", "config", "get", "prefix").Output(); err == nil {
+			prefix := strings.TrimSpace(string(out))
+			if prefix != "" {
+				winPaths = append(winPaths, filepath.Join(prefix, "openclaw.cmd"))
+			}
 		}
 		for _, wp := range winPaths {
 			if _, err := os.Stat(wp); err == nil {
