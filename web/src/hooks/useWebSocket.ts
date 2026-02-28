@@ -82,39 +82,61 @@ export function useWebSocket() {
   }, []);
 
   useEffect(() => {
-    if (IS_DEMO) return; // Skip real WebSocket in demo mode
-    const token = localStorage.getItem('admin-token');
-    if (!token) return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/ws?token=${token}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
+    if (IS_DEMO) return;
+    let unmounted = false;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT = 20;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'event' || msg.type === 'wechat-event') {
-          setEvents(prev => { const next = [...prev, { ...msg.data, _source: msg.type === 'wechat-event' ? 'wechat' : 'qq' }]; return next.length > 200 ? next.slice(-200) : next; });
-        } else if (msg.type === 'log-entry') {
-          setLogEntries(prev => {
-            const next = [msg.data, ...prev];
-            return next.length > 500 ? next.slice(0, 500) : next;
-          });
-        } else if (msg.type === 'napcat-status') {
-          setNapcatStatus(msg.data);
-        } else if (msg.type === 'wechat-status') {
-          setWechatStatus(msg.data);
-        } else if (msg.type === 'task_update' || msg.type === 'task_log') {
-          setWsMessages(prev => [...prev.slice(-100), msg]);
+    const connect = () => {
+      if (unmounted) return;
+      const token = localStorage.getItem('admin-token');
+      if (!token) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${window.location.host}/ws?token=${token}`;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => { reconnectAttempts = 0; };
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'event' || msg.type === 'wechat-event') {
+            setEvents(prev => { const next = [...prev, { ...msg.data, _source: msg.type === 'wechat-event' ? 'wechat' : 'qq' }]; return next.length > 200 ? next.slice(-200) : next; });
+          } else if (msg.type === 'log-entry') {
+            setLogEntries(prev => {
+              const next = [msg.data, ...prev];
+              return next.length > 500 ? next.slice(0, 500) : next;
+            });
+          } else if (msg.type === 'napcat-status') {
+            setNapcatStatus(msg.data);
+          } else if (msg.type === 'wechat-status') {
+            setWechatStatus(msg.data);
+          } else if (msg.type === 'task_update' || msg.type === 'task_log') {
+            setWsMessages(prev => [...prev.slice(-100), msg]);
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        if (unmounted) return;
+        wsRef.current = null;
+        if (!localStorage.getItem('admin-token')) return;
+        if (reconnectAttempts < MAX_RECONNECT) {
+          const delay = Math.min(3000 * Math.pow(2, reconnectAttempts), 30000);
+          reconnectAttempts++;
+          reconnectTimer = setTimeout(connect, delay);
         }
-      } catch {}
+      };
     };
 
-    ws.onclose = () => {
-      setTimeout(() => { if (localStorage.getItem('admin-token')) window.location.reload(); }, 5000);
+    connect();
+    return () => {
+      unmounted = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      wsRef.current?.close();
     };
-
-    return () => { ws.close(); };
   }, []);
 
   const clearEvents = useCallback(() => {

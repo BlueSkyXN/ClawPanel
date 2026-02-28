@@ -441,6 +441,11 @@ func diagnoseNapCatLinux(cfg *config.Config, repair bool) []DiagnoseStep {
 		}
 	}
 
+	// Step 6.7: Check QQ plugin channel.ts startAccount bug
+	// ROOT CAUSE: startAccount returns cleanup function instead of long-lived Promise,
+	// causing OpenClaw gateway auto-restart loop and eventually dead channel handler.
+	steps = append(steps, diagnoseChannelTSStartAccount(cfg, repair)...)
+
 	// If we did repairs that affected config, restart container
 	needsRestart := false
 	for _, s := range steps {
@@ -893,6 +898,96 @@ func SystemDiagnose(cfg *config.Config) gin.HandlerFunc {
 			"report": strings.Join(lines, "\n"),
 		})
 	}
+}
+
+// diagnoseChannelTSStartAccount checks and optionally fixes the QQ plugin's
+// startAccount bug where it returns a cleanup function instead of a long-lived
+// Promise, causing OpenClaw gateway to trigger auto-restart loop.
+func diagnoseChannelTSStartAccount(cfg *config.Config, repair bool) []DiagnoseStep {
+	var steps []DiagnoseStep
+	ocDir := cfg.OpenClawDir
+	if ocDir == "" {
+		home, _ := os.UserHomeDir()
+		ocDir = filepath.Join(home, ".openclaw")
+	}
+	channelTS := filepath.Join(ocDir, "extensions", "qq", "src", "channel.ts")
+	data, err := os.ReadFile(channelTS)
+	if err != nil {
+		return steps // plugin not installed, skip silently
+	}
+	content := string(data)
+
+	if strings.Contains(content, "new Promise") {
+		steps = append(steps, DiagnoseStep{
+			Step: "QQ 插件 startAccount 检测", Status: "ok",
+			Message: "channel.ts startAccount 已使用 Promise 模式",
+		})
+		return steps
+	}
+
+	if !strings.Contains(content, "return () => {") || !strings.Contains(content, "client.disconnect") {
+		return steps // unknown structure, skip
+	}
+
+	// Bug detected
+	if !repair {
+		steps = append(steps, DiagnoseStep{
+			Step: "QQ 插件 startAccount 检测", Status: "error",
+			Message: "channel.ts startAccount 返回 cleanup 函数（导致消息不回复）",
+			Detail:  "startAccount 应返回 long-lived Promise。当前写法导致 OpenClaw 触发 auto-restart 循环，10 次后 channel handler 死亡。点击「诊断并修复」可自动修复",
+		})
+		return steps
+	}
+
+	oldCode := "      client.connect();\n      \n      return () => {\n        client.disconnect();\n        clients.delete(account.accountId);\n        stopFileServer();\n      };"
+	newCode := `      client.connect();
+
+      // Return a Promise that stays pending until abortSignal fires.
+      // OpenClaw gateway expects startAccount to return a long-lived Promise;
+      // if it resolves immediately, the framework treats the account as exited
+      // and triggers auto-restart attempts.
+      const abortSignal = (ctx as any).abortSignal as AbortSignal | undefined;
+      return new Promise<void>((resolve) => {
+        const cleanup = () => {
+          client.disconnect();
+          clients.delete(account.accountId);
+          stopFileServer();
+          resolve();
+        };
+        if (abortSignal) {
+          if (abortSignal.aborted) { cleanup(); return; }
+          abortSignal.addEventListener("abort", cleanup, { once: true });
+        }
+        // Also clean up if the WebSocket closes unexpectedly
+        client.on("close", () => {
+          cleanup();
+        });
+      });`
+
+	if !strings.Contains(content, oldCode) {
+		steps = append(steps, DiagnoseStep{
+			Step: "QQ 插件 startAccount 检测", Status: "warning",
+			Message: "channel.ts 需要修复但代码模式不完全匹配",
+			Detail:  "请手动编辑 " + channelTS + " 将 startAccount 的 return cleanup 函数改为 return new Promise",
+		})
+		return steps
+	}
+
+	patched := strings.Replace(content, oldCode, newCode, 1)
+	if err := os.WriteFile(channelTS, []byte(patched), 0644); err != nil {
+		steps = append(steps, DiagnoseStep{
+			Step: "QQ 插件 startAccount 检测", Status: "error",
+			Message: "channel.ts 修复写入失败: " + err.Error(),
+		})
+		return steps
+	}
+
+	steps = append(steps, DiagnoseStep{
+		Step: "QQ 插件 startAccount 检测", Status: "fixed",
+		Message: "已修复 channel.ts startAccount（返回 long-lived Promise）",
+		Detail:  "这是导致 QQ 消息不回复的根本原因。修复后需重启 OpenClaw 生效",
+	})
+	return steps
 }
 
 func runDiagCmd(name string, args ...string) string {

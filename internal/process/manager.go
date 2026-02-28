@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -351,20 +352,87 @@ func (m *Manager) ensureOpenClawConfig() {
 		}
 	}
 
-	if !changed {
+	if changed {
+		out, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			log.Printf("[ProcessMgr] openclaw.json 序列化失败: %v", err)
+		} else if err := os.WriteFile(cfgPath, out, 0644); err != nil {
+			log.Printf("[ProcessMgr] openclaw.json 写入失败: %v", err)
+		} else {
+			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins)")
+		}
+	}
+
+	// Patch QQ plugin channel.ts: startAccount must return a long-lived Promise
+	m.patchQQPluginChannelTS(ocDir)
+}
+
+// patchQQPluginChannelTS fixes the critical bug where the QQ plugin's startAccount
+// returns a cleanup function instead of a long-lived Promise. OpenClaw gateway
+// wraps startAccount's return value with Promise.resolve(task); if it resolves
+// immediately (non-Promise return), the framework treats the account as exited
+// and triggers auto-restart attempts (up to 10), after which the channel handler
+// dies and incoming messages are never processed.
+func (m *Manager) patchQQPluginChannelTS(ocDir string) {
+	channelTS := filepath.Join(ocDir, "extensions", "qq", "src", "channel.ts")
+	data, err := os.ReadFile(channelTS)
+	if err != nil {
+		return // plugin not installed
+	}
+	content := string(data)
+
+	// Already patched?
+	if strings.Contains(content, "new Promise") {
+		return
+	}
+	// Check for the broken pattern
+	if !strings.Contains(content, "return () => {") || !strings.Contains(content, "client.disconnect") {
 		return
 	}
 
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		log.Printf("[ProcessMgr] openclaw.json 序列化失败: %v", err)
+	oldCode := `      client.connect();
+      
+      return () => {
+        client.disconnect();
+        clients.delete(account.accountId);
+        stopFileServer();
+      };`
+
+	newCode := `      client.connect();
+
+      // Return a Promise that stays pending until abortSignal fires.
+      // OpenClaw gateway expects startAccount to return a long-lived Promise;
+      // if it resolves immediately, the framework treats the account as exited
+      // and triggers auto-restart attempts.
+      const abortSignal = (ctx as any).abortSignal as AbortSignal | undefined;
+      return new Promise<void>((resolve) => {
+        const cleanup = () => {
+          client.disconnect();
+          clients.delete(account.accountId);
+          stopFileServer();
+          resolve();
+        };
+        if (abortSignal) {
+          if (abortSignal.aborted) { cleanup(); return; }
+          abortSignal.addEventListener("abort", cleanup, { once: true });
+        }
+        // Also clean up if the WebSocket closes unexpectedly
+        client.on("close", () => {
+          cleanup();
+        });
+      });`
+
+	if !strings.Contains(content, oldCode) {
+		log.Println("[ProcessMgr] channel.ts 需要修复但模式不匹配，跳过自动补丁")
 		return
 	}
-	if err := os.WriteFile(cfgPath, out, 0644); err != nil {
-		log.Printf("[ProcessMgr] openclaw.json 写入失败: %v", err)
+
+	patched := strings.Replace(content, oldCode, newCode, 1)
+	if err := os.WriteFile(channelTS, []byte(patched), 0644); err != nil {
+		log.Printf("[ProcessMgr] channel.ts 补丁写入失败: %v", err)
 		return
 	}
-	log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins)")
+	log.Println("[ProcessMgr] ✅ channel.ts startAccount 已自动修复 (返回 long-lived Promise)")
 }
 
 // findOpenClawBin 查找 openclaw 可执行文件

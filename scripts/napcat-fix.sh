@@ -470,6 +470,82 @@ else
     fi
 fi
 
+# ─── 8.5 QQ Plugin channel.ts startAccount fix ──────────────────────────────
+# ROOT CAUSE FIX: OpenClaw gateway expects startAccount() to return a long-lived
+# Promise. The original QQ plugin returns a cleanup function, which resolves
+# immediately via Promise.resolve(fn), triggering auto-restart loop (up to 10
+# attempts) after which the channel handler dies and messages are never processed.
+section "8.5 QQ 插件 channel.ts startAccount 修复"
+
+CHANNEL_TS="${QQ_EXT_DIR}/src/channel.ts"
+if [ -f "$CHANNEL_TS" ]; then
+    # Check if the old (broken) pattern exists: returns cleanup function directly
+    if grep -q 'return () => {' "$CHANNEL_TS" 2>/dev/null && grep -q 'client.disconnect' "$CHANNEL_TS" 2>/dev/null && ! grep -q 'new Promise' "$CHANNEL_TS" 2>/dev/null; then
+        warn "channel.ts startAccount 返回 cleanup 函数（会导致 auto-restart 循环），正在修复..."
+        if command -v python3 &>/dev/null; then
+            python3 -c "
+import sys
+with open('${CHANNEL_TS}', 'r') as f:
+    content = f.read()
+
+old_code = '''      client.connect();
+      
+      return () => {
+        client.disconnect();
+        clients.delete(account.accountId);
+        stopFileServer();
+      };'''
+
+new_code = '''      client.connect();
+
+      // Return a Promise that stays pending until abortSignal fires.
+      // OpenClaw gateway expects startAccount to return a long-lived Promise;
+      // if it resolves immediately, the framework treats the account as exited
+      // and triggers auto-restart attempts.
+      const abortSignal = (ctx as any).abortSignal as AbortSignal | undefined;
+      return new Promise<void>((resolve) => {
+        const cleanup = () => {
+          client.disconnect();
+          clients.delete(account.accountId);
+          stopFileServer();
+          resolve();
+        };
+        if (abortSignal) {
+          if (abortSignal.aborted) { cleanup(); return; }
+          abortSignal.addEventListener(\"abort\", cleanup, { once: true });
+        }
+        // Also clean up if the WebSocket closes unexpectedly
+        client.on(\"close\", () => {
+          cleanup();
+        });
+      });'''
+
+if old_code in content:
+    content = content.replace(old_code, new_code)
+    with open('${CHANNEL_TS}', 'w') as f:
+        f.write(content)
+    print('patched')
+else:
+    print('pattern_not_found')
+" 2>/dev/null
+            PATCH_RESULT=$?
+            if [ $PATCH_RESULT -eq 0 ]; then
+                fixed "channel.ts startAccount 已修复为返回 long-lived Promise"
+            else
+                fail "channel.ts 自动修复失败，请手动修改"
+            fi
+        else
+            fail "需要 python3 来修复 channel.ts"
+        fi
+    elif grep -q 'new Promise' "$CHANNEL_TS" 2>/dev/null; then
+        ok "channel.ts startAccount 已使用 Promise 模式（无需修复）"
+    else
+        warn "channel.ts 结构未知，无法自动检测是否需要修复"
+    fi
+else
+    warn "channel.ts 不存在: ${CHANNEL_TS}"
+fi
+
 # ─── 9. Node.js / OpenClaw CLI ────────────────────────────────────────────────
 section "9. 运行环境"
 

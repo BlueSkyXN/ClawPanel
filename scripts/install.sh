@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# ClawPanel v5.0.2 一键安装脚本 (Linux/macOS)
+# ClawPanel v5.0.8 一键安装脚本 (Linux/macOS)
 # 用法:
 #   curl -sSO https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/install.sh && sudo bash install.sh
 # 或:
@@ -9,7 +9,7 @@
 
 set -e
 
-VERSION="5.0.7"
+VERSION="5.0.8"
 INSTALL_DIR="/opt/clawpanel"
 SERVICE_NAME="clawpanel"
 BINARY_NAME="clawpanel"
