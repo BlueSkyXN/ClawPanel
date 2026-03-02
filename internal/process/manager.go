@@ -344,7 +344,9 @@ func (m *Manager) monitorDaemon(port string) {
 }
 
 // ensureOpenClawConfig 启动前检查并修复 openclaw.json 关键配置
-// 确保 gateway.mode=local、channels.qq.wsUrl、plugins.entries.qq、plugins.installs.qq
+// 始终确保 gateway.mode=local；仅当 QQ 插件已安装且 NapCat 正在运行时
+// 才写入 channels.qq / plugins.entries.qq / plugins.installs.qq，
+// 避免用户不使用 QQ 插件时被强制写入导致 OpenClaw 网关启动失败。
 func (m *Manager) ensureOpenClawConfig() {
 	ocDir := m.cfg.OpenClawDir
 	if ocDir == "" {
@@ -371,7 +373,7 @@ func (m *Manager) ensureOpenClawConfig() {
 
 	changed := created
 
-	// Ensure gateway.mode = "local"
+	// Always ensure gateway.mode = "local" — safe regardless of plugins
 	gw, _ := cfg["gateway"].(map[string]interface{})
 	if gw == nil {
 		gw = map[string]interface{}{}
@@ -382,51 +384,62 @@ func (m *Manager) ensureOpenClawConfig() {
 		changed = true
 	}
 
-	// Ensure channels.qq with wsUrl
-	ch, _ := cfg["channels"].(map[string]interface{})
-	if ch == nil {
-		ch = map[string]interface{}{}
-		cfg["channels"] = ch
+	// Only write QQ plugin config if:
+	//   1. The QQ extension directory is installed (extensions/qq exists), AND
+	//   2. NapCat is actually running (Docker container or Windows process)
+	// Without both conditions, injecting channels.qq causes OpenClaw gateway to
+	// fail on startup with "unknown channel id: qq" or similar errors.
+	qqExtDir := filepath.Join(ocDir, "extensions", "qq")
+	qqInstalled := false
+	if _, err := os.Stat(qqExtDir); err == nil {
+		qqInstalled = true
 	}
-	qq, _ := ch["qq"].(map[string]interface{})
-	if qq == nil {
-		qq = map[string]interface{}{}
-		ch["qq"] = qq
-	}
-	if qq["wsUrl"] == nil || qq["wsUrl"] == "" {
-		qq["wsUrl"] = "ws://127.0.0.1:3001"
-		changed = true
-	}
-	if qq["enabled"] == nil {
-		qq["enabled"] = true
-		changed = true
-	}
+	napcatRunning := m.isNapCatRunning()
 
-	// Ensure plugins.entries.qq
-	pl, _ := cfg["plugins"].(map[string]interface{})
-	if pl == nil {
-		pl = map[string]interface{}{}
-		cfg["plugins"] = pl
-	}
-	ent, _ := pl["entries"].(map[string]interface{})
-	if ent == nil {
-		ent = map[string]interface{}{}
-		pl["entries"] = ent
-	}
-	if ent["qq"] == nil {
-		ent["qq"] = map[string]interface{}{"enabled": true}
-		changed = true
-	}
+	if qqInstalled && napcatRunning {
+		// Ensure channels.qq with wsUrl
+		ch, _ := cfg["channels"].(map[string]interface{})
+		if ch == nil {
+			ch = map[string]interface{}{}
+			cfg["channels"] = ch
+		}
+		qq, _ := ch["qq"].(map[string]interface{})
+		if qq == nil {
+			qq = map[string]interface{}{}
+			ch["qq"] = qq
+		}
+		if qq["wsUrl"] == nil || qq["wsUrl"] == "" {
+			qq["wsUrl"] = "ws://127.0.0.1:3001"
+			changed = true
+		}
+		if qq["enabled"] == nil {
+			qq["enabled"] = true
+			changed = true
+		}
 
-	// Ensure plugins.installs.qq
-	ins, _ := pl["installs"].(map[string]interface{})
-	if ins == nil {
-		ins = map[string]interface{}{}
-		pl["installs"] = ins
-	}
-	if ins["qq"] == nil {
-		qqExtDir := filepath.Join(ocDir, "extensions", "qq")
-		if _, err := os.Stat(qqExtDir); err == nil {
+		// Ensure plugins.entries.qq
+		pl, _ := cfg["plugins"].(map[string]interface{})
+		if pl == nil {
+			pl = map[string]interface{}{}
+			cfg["plugins"] = pl
+		}
+		ent, _ := pl["entries"].(map[string]interface{})
+		if ent == nil {
+			ent = map[string]interface{}{}
+			pl["entries"] = ent
+		}
+		if ent["qq"] == nil {
+			ent["qq"] = map[string]interface{}{"enabled": true}
+			changed = true
+		}
+
+		// Ensure plugins.installs.qq
+		ins, _ := pl["installs"].(map[string]interface{})
+		if ins == nil {
+			ins = map[string]interface{}{}
+			pl["installs"] = ins
+		}
+		if ins["qq"] == nil {
 			ins["qq"] = map[string]interface{}{
 				"installPath": qqExtDir,
 				"source":      "archive",
@@ -434,6 +447,8 @@ func (m *Manager) ensureOpenClawConfig() {
 			}
 			changed = true
 		}
+	} else if qqInstalled && !napcatRunning {
+		log.Println("[ProcessMgr] QQ 插件已安装但 NapCat 未运行，跳过 channels.qq 配置注入")
 	}
 
 	if changed {
@@ -559,4 +574,21 @@ func (m *Manager) findOpenClawBin() string {
 		}
 	}
 	return ""
+}
+
+// isNapCatRunning returns true if NapCat is currently running.
+// On Linux it checks for the "openclaw-qq" Docker container;
+// on Windows it checks for NapCat shell processes.
+func (m *Manager) isNapCatRunning() bool {
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq NapCatWinBootMain.exe", "/NH").Output()
+		if err == nil && strings.Contains(string(out), "NapCatWinBootMain") {
+			return true
+		}
+		out2, err2 := exec.Command("tasklist", "/FI", "IMAGENAME eq napcat.exe", "/NH").Output()
+		return err2 == nil && strings.Contains(string(out2), "napcat.exe")
+	}
+	// Linux: check Docker container state
+	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", "openclaw-qq").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
