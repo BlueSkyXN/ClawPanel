@@ -8,7 +8,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$VERSION = "5.0.10"
+$VERSION = "5.0.13"
 $INSTALL_DIR = "C:\ClawPanel"
 $BINARY_NAME = "clawpanel-v${VERSION}-windows-amd64.exe"
 $REPO = "zhaoxinyi02/ClawPanel"
