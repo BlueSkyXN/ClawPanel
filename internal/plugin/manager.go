@@ -58,13 +58,14 @@ type InstalledPlugin struct {
 // RegistryPlugin represents a plugin in the registry
 type RegistryPlugin struct {
 	PluginMeta
-	Downloads   int    `json:"downloads,omitempty"`
-	Stars       int    `json:"stars,omitempty"`
-	DownloadURL string `json:"downloadUrl,omitempty"`
-	GitURL      string `json:"gitUrl,omitempty"`
-	NpmPackage  string `json:"npmPackage,omitempty"` // npm package name e.g. @openclaw/feishu
-	Screenshot  string `json:"screenshot,omitempty"`
-	Readme      string `json:"readme,omitempty"`
+	Downloads     int    `json:"downloads,omitempty"`
+	Stars         int    `json:"stars,omitempty"`
+	DownloadURL   string `json:"downloadUrl,omitempty"`
+	GitURL        string `json:"gitUrl,omitempty"`
+	InstallSubDir string `json:"installSubDir,omitempty"` // subdirectory within git repo to install
+	NpmPackage    string `json:"npmPackage,omitempty"`    // npm package name e.g. @openclaw/feishu
+	Screenshot    string `json:"screenshot,omitempty"`
+	Readme        string `json:"readme,omitempty"`
 }
 
 // Registry represents the plugin registry
@@ -265,12 +266,37 @@ func (m *Manager) Install(pluginID string, source string) error {
 		return fmt.Errorf("插件 %s 已安装，请先卸载或使用更新功能", pluginID)
 	}
 
+	// Determine installSubDir from registry
+	installSubDir := ""
+	if regPlugin != nil {
+		installSubDir = regPlugin.InstallSubDir
+	}
+
 	// Install based on source type
 	if strings.HasSuffix(downloadURL, ".git") || strings.Contains(downloadURL, "github.com") || strings.Contains(downloadURL, "gitee.com") {
-		// Git clone
-		if err := m.installFromGit(downloadURL, pluginDir); err != nil {
-			os.RemoveAll(pluginDir)
-			return fmt.Errorf("Git 安装失败: %v", err)
+		if installSubDir != "" {
+			// Clone full repo to temp dir, then copy subdirectory
+			tmpDir, err := os.MkdirTemp("", "clawpanel-plugin-*")
+			if err != nil {
+				return fmt.Errorf("创建临时目录失败: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+			if err := m.installFromGit(downloadURL, tmpDir); err != nil {
+				return fmt.Errorf("Git 安装失败: %v", err)
+			}
+			subPath := filepath.Join(tmpDir, filepath.FromSlash(installSubDir))
+			if _, err := os.Stat(subPath); err != nil {
+				return fmt.Errorf("子目录 %s 在仓库中不存在", installSubDir)
+			}
+			if err := copyDir(subPath, pluginDir); err != nil {
+				os.RemoveAll(pluginDir)
+				return fmt.Errorf("复制插件目录失败: %v", err)
+			}
+		} else {
+			if err := m.installFromGit(downloadURL, pluginDir); err != nil {
+				os.RemoveAll(pluginDir)
+				return fmt.Errorf("Git 安装失败: %v", err)
+			}
 		}
 	} else if strings.HasSuffix(downloadURL, ".zip") || strings.HasSuffix(downloadURL, ".tar.gz") {
 		// Download archive
