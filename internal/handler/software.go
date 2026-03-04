@@ -1229,7 +1229,17 @@ fi
 echo "📥 拉取 NapCat 镜像..."
 docker pull mlikiowa/napcat-docker:latest
 
-echo "🔧 创建容器..."
+# Detect existing logged-in account for quick re-login
+ACCOUNT_ARG=""
+if docker inspect openclaw-qq &>/dev/null; then
+  PREV_ACCOUNT=$(docker inspect openclaw-qq --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^ACCOUNT=' | cut -d= -f2)
+  if [ -n "$PREV_ACCOUNT" ]; then
+    ACCOUNT_ARG="-e ACCOUNT=$PREV_ACCOUNT"
+    echo "� 使用快速登录账号: $PREV_ACCOUNT"
+  fi
+fi
+
+echo "� 创建容器..."
 docker run -d \
   --name openclaw-qq \
   --restart unless-stopped \
@@ -1239,6 +1249,7 @@ docker run -d \
   -e NAPCAT_GID=0 \
   -e NAPCAT_UID=0 \
   -e WEBUI_TOKEN=clawpanel-qq \
+  $ACCOUNT_ARG \
   -v napcat-qq-session:/app/.config/QQ \
   -v napcat-config:/app/napcat/config \
   -v %s:/root/.openclaw:rw \
@@ -1250,39 +1261,47 @@ sleep 5
 
 # Configure OneBot11 WebSocket + HTTP
 echo "🔧 配置 OneBot11 (WS + HTTP)..."
-docker exec openclaw-qq bash -c 'cat > /app/napcat/config/onebot11.json << OBEOF
+# Read accessToken from openclaw.json for WS token sync
+OPENCLAW_DIR="${HOME}/.openclaw"
+if [ -f "${OPENCLAW_DIR}/openclaw.json" ]; then
+  WS_TOKEN=$(python3 -c "import json,sys; d=json.load(open('${OPENCLAW_DIR}/openclaw.json')); print(d.get('channels',{}).get('qq',{}).get('accessToken',''))" 2>/dev/null || echo "")
+else
+  WS_TOKEN=""
+fi
+
+docker exec openclaw-qq bash -c "cat > /app/napcat/config/onebot11.json << OBEOF
 {
-  "network": {
-    "websocketServers": [{
-      "name": "ws-server",
-      "enable": true,
-      "host": "0.0.0.0",
-      "port": 3001,
-      "token": "",
-      "reportSelfMessage": true,
-      "enableForcePushEvent": true,
-      "messagePostFormat": "array",
-      "debug": false,
-      "heartInterval": 30000
+  \"network\": {
+    \"websocketServers\": [{
+      \"name\": \"ws-server\",
+      \"enable\": true,
+      \"host\": \"0.0.0.0\",
+      \"port\": 3001,
+      \"token\": \"${WS_TOKEN}\",
+      \"reportSelfMessage\": true,
+      \"enableForcePushEvent\": true,
+      \"messagePostFormat\": \"array\",
+      \"debug\": false,
+      \"heartInterval\": 30000
     }],
-    "httpServers": [{
-      "name": "http-api",
-      "enable": true,
-      "host": "0.0.0.0",
-      "port": 3000,
-      "token": ""
+    \"httpServers\": [{
+      \"name\": \"http-api\",
+      \"enable\": true,
+      \"host\": \"0.0.0.0\",
+      \"port\": 3000,
+      \"token\": \"\"
     }],
-    "httpSseServers": [],
-    "httpClients": [],
-    "websocketClients": [],
-    "plugins": []
+    \"httpSseServers\": [],
+    \"httpClients\": [],
+    \"websocketClients\": [],
+    \"plugins\": []
   },
-  "musicSignUrl": "",
-  "enableLocalFile2Url": true,
-  "parseMultMsg": true,
-  "imageDownloadProxy": ""
+  \"musicSignUrl\": \"\",
+  \"enableLocalFile2Url\": true,
+  \"parseMultMsg\": true,
+  \"imageDownloadProxy\": \"\"
 }
-OBEOF'
+OBEOF"
 
 # Configure WebUI
 docker exec openclaw-qq bash -c 'cat > /app/napcat/config/webui.json << WUEOF
