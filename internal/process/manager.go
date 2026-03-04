@@ -451,6 +451,30 @@ func (m *Manager) ensureOpenClawConfig() {
 		log.Println("[ProcessMgr] QQ 插件已安装但 NapCat 未运行，跳过 channels.qq 配置注入")
 	}
 
+	// Fix invalid channel config values that cause OpenClaw gateway to refuse to start.
+	// e.g. whatsapp.dmPolicy must be one of "pairing"|"allowlist"|"open"|"disabled"
+	ch, _ := cfg["channels"].(map[string]interface{})
+	if ch != nil {
+		if wa, ok := ch["whatsapp"].(map[string]interface{}); ok {
+			validDmPolicy := map[string]bool{"pairing": true, "allowlist": true, "open": true, "disabled": true}
+			if dp, _ := wa["dmPolicy"].(string); dp != "" && !validDmPolicy[dp] {
+				log.Printf("[ProcessMgr] 修复无效 channels.whatsapp.dmPolicy 值 %q → \"disabled\"", dp)
+				wa["dmPolicy"] = "disabled"
+				ch["whatsapp"] = wa
+				cfg["channels"] = ch
+				changed = true
+			}
+			validGroupPolicy := map[string]bool{"pairing": true, "allowlist": true, "open": true, "disabled": true}
+			if gp, _ := wa["groupPolicy"].(string); gp != "" && !validGroupPolicy[gp] {
+				log.Printf("[ProcessMgr] 修复无效 channels.whatsapp.groupPolicy 值 %q → \"disabled\"", gp)
+				wa["groupPolicy"] = "disabled"
+				ch["whatsapp"] = wa
+				cfg["channels"] = ch
+				changed = true
+			}
+		}
+	}
+
 	if changed {
 		out, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
@@ -458,7 +482,7 @@ func (m *Manager) ensureOpenClawConfig() {
 		} else if err := os.WriteFile(cfgPath, out, 0644); err != nil {
 			log.Printf("[ProcessMgr] openclaw.json 写入失败: %v", err)
 		} else {
-			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins)")
+			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins/whatsapp)")
 		}
 	}
 
