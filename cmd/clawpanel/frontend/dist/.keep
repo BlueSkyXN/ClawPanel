@@ -1,0 +1,1 @@
+placeholder for go:embed; real assets are generated into this directory during web build.

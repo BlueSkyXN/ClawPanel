@@ -25,8 +25,9 @@ interface ChatMessage {
 
 export default function Sessions() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [agentOptions, setAgentOptions] = useState<string[]>(['main']);
-  const [selectedAgent, setSelectedAgent] = useState('main');
+  const [agentOptions, setAgentOptions] = useState<string[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [defaultAgent, setDefaultAgent] = useState('main');
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<SessionInfo | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -34,6 +35,11 @@ export default function Sessions() {
   const [search, setSearch] = useState('');
 
   const loadSessions = async () => {
+    if (!selectedAgent) {
+      setSessions([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const r = await api.getSessions(selectedAgent);
@@ -46,11 +52,24 @@ export default function Sessions() {
     try {
       const r = await api.getAgentsConfig();
       if (r.ok) {
-        const list = (r.agents?.list || []).map((x: any) => x.id).filter(Boolean);
-        const uniq = Array.from(new Set(['main', ...list]));
+        const list = (r.agents?.list || []).map((x: any) => String(x.id || '').trim()).filter(Boolean);
+        const configuredDefaultRaw = String(r.agents?.default || '').trim();
+        const fallbackDefault = list[0] || 'main';
+        const effectiveDefault = configuredDefaultRaw && list.includes(configuredDefaultRaw) ? configuredDefaultRaw : fallbackDefault;
+        const uniq = Array.from(new Set<string>(list.length > 0 ? list : [effectiveDefault]));
         setAgentOptions(uniq);
+        setDefaultAgent(effectiveDefault);
+        setSelectedAgent(prev => {
+          if (prev === 'all') return prev;
+          if (prev && uniq.includes(prev)) return prev;
+          return effectiveDefault;
+        });
       }
-    } catch {}
+    } catch {
+      setAgentOptions(['main']);
+      setDefaultAgent('main');
+      setSelectedAgent(prev => prev || 'main');
+    }
   };
 
   useEffect(() => {
@@ -68,7 +87,7 @@ export default function Sessions() {
     setMsgLoading(true);
     setMessages([]);
     try {
-      const targetAgent = s.agentId || selectedAgent;
+      const targetAgent = s.agentId || (selectedAgent === 'all' ? defaultAgent : selectedAgent);
       const r = await api.getSessionDetail(s.sessionId, targetAgent);
       if (r.ok) setMessages(r.messages || []);
     } catch {}
@@ -78,7 +97,7 @@ export default function Sessions() {
   const handleDelete = async (s: SessionInfo) => {
     if (!confirm(`确定删除会话 "${s.originLabel || s.key}"？此操作不可恢复。`)) return;
     try {
-      const targetAgent = s.agentId || selectedAgent;
+      const targetAgent = s.agentId || (selectedAgent === 'all' ? defaultAgent : selectedAgent);
       const r = await api.deleteSession(s.sessionId, targetAgent);
       if (r.ok) {
         setSessions(prev => prev.filter(x => !(x.sessionId === s.sessionId && (x.agentId || selectedAgent) === targetAgent)));

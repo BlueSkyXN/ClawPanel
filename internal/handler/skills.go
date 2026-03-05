@@ -257,6 +257,10 @@ func SaveCronJobs(cfg *config.Config) gin.HandlerFunc {
 		if len(agentIDs) == 0 {
 			agentSet = map[string]struct{}{"main": {}}
 		}
+		defaultAgent := loadDefaultAgentID(cfg)
+		if defaultAgent == "" {
+			defaultAgent = "main"
+		}
 		for i := range req.Jobs {
 			job, ok := req.Jobs[i].(map[string]interface{})
 			if !ok {
@@ -264,7 +268,7 @@ func SaveCronJobs(cfg *config.Config) gin.HandlerFunc {
 			}
 			target := strings.TrimSpace(toString(job["sessionTarget"]))
 			if target == "" {
-				target = "main"
+				target = defaultAgent
 				job["sessionTarget"] = target
 			}
 			if _, ok := agentSet[target]; !ok {

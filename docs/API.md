@@ -1,4 +1,4 @@
-# ClawPanel API 接口文档 (v5.0.16)
+# ClawPanel API 接口文档 (v5.1.0)
 
 所有接口需要 JWT 认证（除 `/api/auth/login`），请在请求头中添加：
 ```
@@ -191,7 +191,7 @@ Authorization: Bearer <token>
 { "config": { ... } }
 ```
 
-> v5.0.16+：配置写入前会自动备份到 `OPENCLAW_DIR/backups/pre-edit-*.json`，并保留最近 10 份。
+> v5.1.0+：配置写入前会自动备份到 `OPENCLAW_DIR/backups/pre-edit-*.json`，并保留最近 10 份。
 
 ### GET `/api/openclaw/agents`
 获取多智能体配置与统计信息（`defaults` / `default` / `list` / `bindings`）。
@@ -241,6 +241,12 @@ Authorization: Bearer <token>
 ```
 
 > 兼容性：后端同时兼容旧字段 `agent`，写入时会标准化为 `agentId`。
+>
+> v5.1.0+：`match` 开启严格校验：
+> - `match.channel` 必填
+> - 允许字段：`channel/sender/peer/parentPeer/guildId/teamId/accountId/roles`
+> - `roles` 必须与 `guildId` 同时使用
+> - `peer/parentPeer` 支持字符串（如 `group:*`）和对象（如 `{ "kind": "group", "id": "123" }`）
 
 ### POST `/api/openclaw/route/preview`
 路由预览。根据 `meta` 返回命中 Agent、命中规则和 trace。
@@ -257,6 +263,9 @@ Authorization: Bearer <token>
   }
 }
 ```
+
+> v5.1.0+：预览命中遵循“更具体规则优先”而非仅配置顺序。优先级：
+> `sender > peer > parentPeer > guildId+roles > guildId > teamId > accountId > accountId:* > channel > default`。
 
 ### GET `/api/openclaw/models`
 获取模型配置。
@@ -421,18 +430,21 @@ Authorization: Bearer <token>
 { "jobs": [...] }
 ```
 
-> v5.0.16+：保存前会校验每个任务的 `sessionTarget` 必须存在于 Agent 列表。
+> v5.1.0+：保存前会校验每个任务的 `sessionTarget` 必须存在于 Agent 列表。
+>
+> v5.1.0+：当 `sessionTarget` 为空时，后端会自动回填为 `agents.default`（若默认值无效，则回退到已存在 Agent，最终兜底 `main`）。
 
 ## 会话管理
 
-### GET `/api/sessions?agent=main|all|<agentId>`
+### GET `/api/sessions?agent=<agentId>|all`
 获取会话列表。`agent=all` 时聚合全部 Agent 会话，并返回 `agentId` 字段。
+当 `agent` 省略时默认使用 `agents.default`（若默认值无效，则回退到已存在 Agent，最终兜底 `main`）。
 
 ### GET `/api/sessions/:id?agent=<agentId>`
-获取指定会话详情（必须指定有效 agent，`agent=all` 不支持）。
+获取指定会话详情（`agent=all` 不支持）。当 `agent` 省略时默认使用 `agents.default`（默认值无效时自动回退）。
 
 ### DELETE `/api/sessions/:id?agent=<agentId>`
-删除指定会话（必须指定有效 agent，`agent=all` 不支持）。
+删除指定会话（`agent=all` 不支持）。当 `agent` 省略时默认使用 `agents.default`（默认值无效时自动回退）。
 
 ### GET `/api/system/docs`
 获取 OpenClaw 目录下的文档列表。

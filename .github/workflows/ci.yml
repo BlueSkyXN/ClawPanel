@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-vet:
+    name: Go Vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run go vet
+        run: go vet ./...
+
+  go-test:
+    name: Go Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go tests
+        run: go test -count=1 -shuffle=on ./...
+
+  go-race-coverage:
+    name: Go Race + Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go tests with race and coverage
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Summarize coverage
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          TOTAL="$(awk '/^total:/ { print $3 }' coverage.txt)"
+          {
+            echo "### Go Coverage"
+            echo ""
+            echo "- Total coverage: \`${TOTAL}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            coverage.out
+            coverage.txt
+          retention-days: 14
+
+  web-build:
+    name: Web Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build web
+        working-directory: web
+        run: npm run build
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 7
+
+  backend-build:
+    name: Backend Build
+    needs: [go-vet, go-test, go-race-coverage, web-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download web dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist
+
+      - name: Embed web dist
+        run: |
+          rm -rf cmd/clawpanel/frontend/dist
+          mkdir -p cmd/clawpanel/frontend/dist
+          cp -r web/dist/* cmd/clawpanel/frontend/dist/
+
+      - name: Build backend binary
+        run: make backend-only
+
+      - name: Upload backend binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: clawpanel-linux-amd64-ci
+          path: bin/clawpanel
+          retention-days: 7

@@ -323,8 +323,13 @@ func SaveOpenClawBindings(cfg *config.Config) gin.HandlerFunc {
 			if _, ok := b["enabled"]; !ok {
 				b["enabled"] = true
 			}
-			if _, ok := b["match"].(map[string]interface{}); !ok {
+			match, ok := b["match"].(map[string]interface{})
+			if !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": fmt.Sprintf("bindings[%d] 缺少有效 match", i)})
+				return
+			}
+			if err := validateBindingMatch(i, match); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 				return
 			}
 		}
@@ -384,12 +389,50 @@ func PreviewOpenClawRoute(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+var bindingMatchAllowedKeys = []string{
+	"channel",
+	"sender",
+	"peer",
+	"parentPeer",
+	"guildId",
+	"teamId",
+	"accountId",
+	"roles",
+}
+
+var bindingMatchAllowedSet = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(bindingMatchAllowedKeys))
+	for _, k := range bindingMatchAllowedKeys {
+		out[k] = struct{}{}
+	}
+	return out
+}()
+
+var bindingMatchEvalOrder = []string{
+	"channel",
+	"sender",
+	"peer",
+	"parentPeer",
+	"guildId",
+	"roles",
+	"teamId",
+	"accountId",
+}
+
+type routePreviewCandidate struct {
+	index       int
+	agent       string
+	priority    int
+	priorityKey string
+}
+
 func evaluateRoutePreview(meta map[string]interface{}, bindings []map[string]interface{}, defaultAgent string) (string, string, []string) {
 	if isLegacySingleAgentMode() {
 		return "main", "legacy-single-agent", []string{"LEGACY_SINGLE_AGENT=true", "fallback main"}
 	}
 
-	trace := make([]string, 0, len(bindings)*2+1)
+	trace := make([]string, 0, len(bindings)*2+2)
+	candidates := make([]routePreviewCandidate, 0, len(bindings))
 	for i, rule := range bindings {
 		enabled := true
 		if v, ok := rule["enabled"].(bool); ok {
@@ -409,46 +452,35 @@ func evaluateRoutePreview(meta map[string]interface{}, bindings []map[string]int
 			trace = append(trace, fmt.Sprintf("skip bindings[%d]: empty match", i))
 			continue
 		}
-
-		keys := make([]string, 0, len(match))
-		for k := range match {
-			keys = append(keys, k)
+		if err := validateBindingMatch(i, match); err != nil {
+			trace = append(trace, fmt.Sprintf("skip bindings[%d]: invalid match (%s)", i, err.Error()))
+			continue
 		}
-		sort.Strings(keys)
-
-		hitField := ""
-		matched := true
-		for _, key := range keys {
-			expected := match[key]
-			actual, ok := meta[key]
-			if !ok {
-				// 兼容 parentPeer 与 peer 的双向兜底
-				if key == "parentPeer" {
-					actual, ok = meta["peer"]
-				} else if key == "peer" {
-					actual, ok = meta["parentPeer"]
-				}
-			}
-			if !ok {
-				trace = append(trace, fmt.Sprintf("bindings[%d] miss meta.%s", i, key))
-				matched = false
-				break
-			}
-			if !matchMetaValue(actual, expected) {
-				trace = append(trace, fmt.Sprintf("bindings[%d] mismatch %s", i, key))
-				matched = false
-				break
-			}
-			hitField = key
+		matched, reason := matchBindingRule(meta, match)
+		if !matched {
+			trace = append(trace, fmt.Sprintf("bindings[%d] %s", i, reason))
+			continue
 		}
+		priority, priorityKey := bindingMatchPriority(match)
+		trace = append(trace, fmt.Sprintf("hit bindings[%d]: priority %s", i, priorityLabel(priorityKey)))
+		candidates = append(candidates, routePreviewCandidate{
+			index:       i,
+			agent:       agent,
+			priority:    priority,
+			priorityKey: priorityKey,
+		})
+	}
 
-		if matched {
-			trace = append(trace, fmt.Sprintf("hit bindings[%d]", i))
-			if hitField == "" {
-				hitField = "unknown"
+	if len(candidates) > 0 {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			if candidates[i].priority != candidates[j].priority {
+				return candidates[i].priority < candidates[j].priority
 			}
-			return agent, fmt.Sprintf("bindings[%d].match.%s", i, hitField), trace
-		}
+			return candidates[i].index < candidates[j].index
+		})
+		best := candidates[0]
+		trace = append(trace, fmt.Sprintf("select bindings[%d]: %s", best.index, priorityLabel(best.priorityKey)))
+		return best.agent, fmt.Sprintf("bindings[%d].match.%s", best.index, best.priorityKey), trace
 	}
 
 	if strings.TrimSpace(defaultAgent) == "" {
@@ -456,6 +488,316 @@ func evaluateRoutePreview(meta map[string]interface{}, bindings []map[string]int
 	}
 	trace = append(trace, "fallback default")
 	return defaultAgent, "default", trace
+}
+
+func priorityLabel(key string) string {
+	switch key {
+	case "sender":
+		return "sender"
+	case "peer":
+		return "peer"
+	case "parentPeer":
+		return "parentPeer"
+	case "guildId+roles":
+		return "guildId+roles"
+	case "guildId":
+		return "guildId"
+	case "teamId":
+		return "teamId"
+	case "accountId":
+		return "accountId"
+	case "accountId:*":
+		return "accountId:*"
+	case "channel":
+		return "channel"
+	default:
+		return "generic"
+	}
+}
+
+func bindingMatchPriority(match map[string]interface{}) (int, string) {
+	if hasMatchField(match, "sender") {
+		return 1, "sender"
+	}
+	if hasMatchField(match, "peer") {
+		return 2, "peer"
+	}
+	if hasMatchField(match, "parentPeer") {
+		return 3, "parentPeer"
+	}
+	if hasMatchField(match, "guildId") && hasMatchField(match, "roles") {
+		return 4, "guildId+roles"
+	}
+	if hasMatchField(match, "guildId") {
+		return 5, "guildId"
+	}
+	if hasMatchField(match, "teamId") {
+		return 6, "teamId"
+	}
+	if hasMatchField(match, "accountId") {
+		if isWildcardMatchValue(match["accountId"]) {
+			return 8, "accountId:*"
+		}
+		return 7, "accountId"
+	}
+	if hasMatchField(match, "channel") {
+		return 9, "channel"
+	}
+	return 10, "generic"
+}
+
+func hasMatchField(match map[string]interface{}, key string) bool {
+	if match == nil {
+		return false
+	}
+	_, ok := match[key]
+	return ok
+}
+
+func isWildcardMatchValue(v interface{}) bool {
+	switch t := v.(type) {
+	case string:
+		return strings.ContainsAny(strings.TrimSpace(t), "*?[]")
+	case []interface{}:
+		for _, item := range t {
+			if isWildcardMatchValue(item) {
+				return true
+			}
+		}
+		return false
+	case []string:
+		for _, item := range t {
+			if isWildcardMatchValue(item) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func matchBindingRule(meta, match map[string]interface{}) (bool, string) {
+	keys := orderedMatchKeys(match)
+	for _, key := range keys {
+		expected := match[key]
+		actual, ok := readMetaForMatch(meta, key)
+		if !ok {
+			return false, fmt.Sprintf("miss meta.%s", key)
+		}
+		if !matchBindingFieldValue(key, actual, expected) {
+			return false, fmt.Sprintf("mismatch %s", key)
+		}
+	}
+	return true, "matched"
+}
+
+func orderedMatchKeys(match map[string]interface{}) []string {
+	keys := make([]string, 0, len(match))
+	seen := map[string]struct{}{}
+	for _, key := range bindingMatchEvalOrder {
+		if _, ok := match[key]; ok {
+			keys = append(keys, key)
+			seen[key] = struct{}{}
+		}
+	}
+	extras := make([]string, 0)
+	for key := range match {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		extras = append(extras, key)
+	}
+	sort.Strings(extras)
+	keys = append(keys, extras...)
+	return keys
+}
+
+func readMetaForMatch(meta map[string]interface{}, key string) (interface{}, bool) {
+	actual, ok := meta[key]
+	if ok {
+		return actual, true
+	}
+	// parentPeer 与 peer 允许双向兜底，适配不同 channel 的元数据格式。
+	if key == "parentPeer" {
+		actual, ok = meta["peer"]
+		return actual, ok
+	}
+	if key == "peer" {
+		actual, ok = meta["parentPeer"]
+		return actual, ok
+	}
+	return nil, false
+}
+
+func matchBindingFieldValue(field string, actual, expected interface{}) bool {
+	switch field {
+	case "peer", "parentPeer":
+		return matchPeerField(actual, expected)
+	default:
+		return matchMetaValue(actual, expected)
+	}
+}
+
+func matchPeerField(actual, expected interface{}) bool {
+	if expectedObj, ok := expected.(map[string]interface{}); ok {
+		actualPeer, ok := normalizePeerValue(actual)
+		if !ok {
+			return false
+		}
+		if kindExp, exists := expectedObj["kind"]; exists && !matchMetaValue(actualPeer["kind"], kindExp) {
+			return false
+		}
+		if idExp, exists := expectedObj["id"]; exists && !matchMetaValue(actualPeer["id"], idExp) {
+			return false
+		}
+		return true
+	}
+	return matchMetaValue(actual, expected)
+}
+
+func normalizePeerValue(v interface{}) (map[string]interface{}, bool) {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		kind := strings.TrimSpace(toString(t["kind"]))
+		id := strings.TrimSpace(toString(t["id"]))
+		if kind == "" {
+			if raw := strings.TrimSpace(toString(t["raw"])); raw != "" {
+				kind, id = splitPeerKindID(raw)
+			}
+		}
+		if kind == "" {
+			if tp := strings.TrimSpace(toString(t["type"])); tp != "" {
+				kind = tp
+			}
+		}
+		if kind == "" {
+			return nil, false
+		}
+		return map[string]interface{}{"kind": kind, "id": id}, true
+	case string:
+		kind, id := splitPeerKindID(strings.TrimSpace(t))
+		if kind == "" {
+			return nil, false
+		}
+		return map[string]interface{}{"kind": kind, "id": id}, true
+	default:
+		raw := strings.TrimSpace(fmt.Sprint(v))
+		if raw == "" || raw == "<nil>" {
+			return nil, false
+		}
+		kind, id := splitPeerKindID(raw)
+		if kind == "" {
+			return nil, false
+		}
+		return map[string]interface{}{"kind": kind, "id": id}, true
+	}
+}
+
+func splitPeerKindID(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(raw, ":", 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	}
+	return strings.TrimSpace(parts[0]), ""
+}
+
+func validateBindingMatch(index int, match map[string]interface{}) error {
+	if len(match) == 0 {
+		return fmt.Errorf("bindings[%d] 缺少有效 match", index)
+	}
+	if _, ok := match["channel"]; !ok {
+		return fmt.Errorf("bindings[%d].match.channel 必填", index)
+	}
+	if _, ok := match["roles"]; ok {
+		if _, hasGuild := match["guildId"]; !hasGuild {
+			return fmt.Errorf("bindings[%d].match.roles 需与 guildId 同时使用", index)
+		}
+	}
+	for key, val := range match {
+		if _, ok := bindingMatchAllowedSet[key]; !ok {
+			return fmt.Errorf("bindings[%d].match.%s 不支持，允许字段: %s", index, key, strings.Join(bindingMatchAllowedKeys, ", "))
+		}
+		var err error
+		switch key {
+		case "peer", "parentPeer":
+			err = validatePeerMatchField(val)
+		default:
+			err = validateStringMatchField(val)
+		}
+		if err != nil {
+			return fmt.Errorf("bindings[%d].match.%s %s", index, key, err.Error())
+		}
+	}
+	return nil
+}
+
+func validateStringMatchField(v interface{}) error {
+	switch t := v.(type) {
+	case string:
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("不能为空字符串")
+		}
+		return nil
+	case []string:
+		if len(t) == 0 {
+			return fmt.Errorf("不能为空数组")
+		}
+		for i, item := range t {
+			if strings.TrimSpace(item) == "" {
+				return fmt.Errorf("数组项[%d] 不能为空字符串", i)
+			}
+		}
+		return nil
+	case []interface{}:
+		if len(t) == 0 {
+			return fmt.Errorf("不能为空数组")
+		}
+		for i, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("数组项[%d] 仅支持字符串", i)
+			}
+			if strings.TrimSpace(s) == "" {
+				return fmt.Errorf("数组项[%d] 不能为空字符串", i)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("仅支持字符串或字符串数组")
+	}
+}
+
+func validatePeerMatchField(v interface{}) error {
+	if err := validateStringMatchField(v); err == nil {
+		return nil
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("仅支持字符串、字符串数组或对象")
+	}
+	for key := range obj {
+		if key != "kind" && key != "id" {
+			return fmt.Errorf("对象仅允许 kind/id 字段")
+		}
+	}
+	kindRaw, ok := obj["kind"]
+	if !ok {
+		return fmt.Errorf("对象模式缺少 kind")
+	}
+	if err := validateStringMatchField(kindRaw); err != nil {
+		return fmt.Errorf("kind %s", err.Error())
+	}
+	if idRaw, ok := obj["id"]; ok {
+		if err := validateStringMatchField(idRaw); err != nil {
+			return fmt.Errorf("id %s", err.Error())
+		}
+	}
+	return nil
 }
 
 func matchMetaValue(actual, expected interface{}) bool {

@@ -53,7 +53,10 @@ type MsgContent struct {
 // GetSessions returns the list of all sessions
 func GetSessions(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		agentID := c.DefaultQuery("agent", "main")
+		agentID := strings.TrimSpace(c.Query("agent"))
+		if agentID == "" {
+			agentID = loadDefaultAgentID(cfg)
+		}
 		if isLegacySingleAgentMode() {
 			agentID = "main"
 		}
@@ -90,7 +93,10 @@ func GetSessions(cfg *config.Config) gin.HandlerFunc {
 func GetSessionDetail(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := c.Param("id")
-		agentID := c.DefaultQuery("agent", "main")
+		agentID := strings.TrimSpace(c.Query("agent"))
+		if agentID == "" {
+			agentID = loadDefaultAgentID(cfg)
+		}
 		if isLegacySingleAgentMode() {
 			agentID = "main"
 		}
@@ -131,7 +137,10 @@ func GetSessionDetail(cfg *config.Config) gin.HandlerFunc {
 func DeleteSession(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := c.Param("id")
-		agentID := c.DefaultQuery("agent", "main")
+		agentID := strings.TrimSpace(c.Query("agent"))
+		if agentID == "" {
+			agentID = loadDefaultAgentID(cfg)
+		}
 		if isLegacySingleAgentMode() {
 			agentID = "main"
 		}
