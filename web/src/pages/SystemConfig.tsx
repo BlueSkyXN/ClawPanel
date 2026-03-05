@@ -755,11 +755,38 @@ export default function SystemConfig() {
         <div className="space-y-3">
           <CfgSection title="网关配置" icon={Globe} fields={[
             { path: 'gateway.port', label: '端口', type: 'number' as const, placeholder: '18789' },
-            { path: 'gateway.mode', label: '模式', type: 'select' as const, options: ['local', 'remote'] },
-            { path: 'gateway.bind', label: '绑定', type: 'select' as const, options: ['lan', 'localhost', 'all'] },
-            { path: 'gateway.auth.mode', label: '认证模式', type: 'select' as const, options: ['token', 'password'] },
+            { path: 'gateway.mode', label: '模式', type: 'select' as const, options: ['local', 'hosted'] },
+            { path: 'gateway.bind', label: '绑定', type: 'select' as const, options: ['auto', 'loopback', 'lan', 'tailnet', 'custom'] },
+            { path: 'gateway.bindAddress', label: '自定义绑定地址', type: 'text' as const, placeholder: '0.0.0.0 / 127.0.0.1 / ::1' },
+            { path: 'gateway.auth.mode', label: '认证模式', type: 'select' as const, options: ['none', 'token', 'password', 'trusted-proxy'] },
             { path: 'gateway.auth.token', label: '认证Token', type: 'password' as const },
           ]} getVal={getVal} setVal={setVal} />
+          <CfgSection title="多智能体协同" icon={Users} fields={[
+            { path: 'tools.agentToAgent.enabled', label: '启用 Agent 间委托', type: 'toggle' as const },
+            { path: 'session.agentToAgent.maxPingPongTurns', label: '最大来回委托轮次', type: 'number' as const, placeholder: '4' },
+            { path: 'tools.sessions.visibility', label: '会话可见性', type: 'select' as const, options: ['same-agent', 'all-agents'] },
+          ]} getVal={getVal} setVal={setVal} />
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5 space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white">Agent 间委托白名单</h3>
+              <code className="text-[9px] text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800">tools.agentToAgent.allow</code>
+            </div>
+            <input
+              value={(() => {
+                const raw = getVal('tools.agentToAgent.allow');
+                if (Array.isArray(raw)) return raw.join(', ');
+                if (typeof raw === 'string') return raw;
+                return '';
+              })()}
+              onChange={e => {
+                const list = e.target.value.split(',').map(x => x.trim()).filter(Boolean);
+                setVal('tools.agentToAgent.allow', list);
+              }}
+              placeholder="例如: *, main->work, work->main"
+              className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono"
+            />
+            <p className="text-[11px] text-gray-500">用逗号分隔规则；保存时会写为数组。</p>
+          </div>
           <CfgSection title="Hooks" icon={Webhook} fields={[
             { path: 'hooks.enabled', label: '启用Hooks', type: 'toggle' as const },
             { path: 'hooks.basePath', label: '基础路径', type: 'text' as const, placeholder: '/hooks' },

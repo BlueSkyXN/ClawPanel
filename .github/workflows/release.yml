@@ -1,0 +1,244 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without leading v (optional)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${INPUT_VERSION:-}" ]]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="$(awk -F '[:= ]+' '/^VERSION[[:space:]]*:=[[:space:]]*/ { print $2; exit }' Makefile)"
+          fi
+
+          if [[ -z "${VERSION}" ]]; then
+            echo "Failed to resolve version" >&2
+            exit 1
+          fi
+
+          echo "Resolved version: ${VERSION}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+  build-frontend:
+    name: Build Frontend
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build web
+        working-directory: web
+        run: npm run build
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 3
+
+  build-binaries:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: [prepare, build-frontend]
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            ext: ''
+          - os: linux
+            arch: arm64
+            ext: ''
+          - os: darwin
+            arch: amd64
+            ext: ''
+          - os: darwin
+            arch: arm64
+            ext: ''
+          - os: windows
+            arch: amd64
+            ext: '.exe'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download web dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist
+
+      - name: Embed web dist
+        run: |
+          rm -rf cmd/clawpanel/frontend/dist
+          mkdir -p cmd/clawpanel/frontend/dist
+          cp -r web/dist/* cmd/clawpanel/frontend/dist/
+
+      - name: Build binary
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BINARY_NAME="clawpanel-v${VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          CGO_ENABLED=0 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
+            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+            -o "dist/${BINARY_NAME}" ./cmd/clawpanel/
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/clawpanel-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          retention-days: 30
+
+  build-installer:
+    name: Build Windows Installer
+    needs: [prepare, build-binaries]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download windows binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-windows-amd64
+          path: dist
+
+      - name: Build installer
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p installer/payload dist
+          cp "dist/clawpanel-v${VERSION}-windows-amd64.exe" "installer/payload/clawpanel.exe"
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w" \
+            -o "dist/ClawPanel-Setup-v${VERSION}.exe" ./installer
+          rm -f installer/payload/clawpanel.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/ClawPanel-Setup-v${{ needs.prepare.outputs.version }}.exe
+          retention-days: 30
+
+  bundle:
+    name: Bundle Release Assets
+    needs: [prepare, build-binaries, build-installer]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: release
+          merge-multiple: true
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: release
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum * | sort > checksums.txt
+
+      - name: Upload bundled artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle-${{ needs.prepare.outputs.version }}
+          path: release/*
+          retention-days: 30
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [prepare, bundle]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download bundled artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle-${{ needs.prepare.outputs.version }}
+          path: release
+
+      - name: Upload assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ClawPanel ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release/*
+          fail_on_unmatched_files: true

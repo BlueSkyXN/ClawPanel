@@ -9,9 +9,11 @@
 Go Single Binary · React 18 · TailwindCSS · SQLite · WebSocket Real-time · Cross-platform
 
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-red?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-5.0.10-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Version](https://img.shields.io/badge/version-5.1.0-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev)
+[![CI](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml)
+[![Release Build](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/release.yml/badge.svg)](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/release.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/zhaoxinyi02/ClawPanel?style=flat-square&logo=github)](https://github.com/zhaoxinyi02/ClawPanel/stargazers)
 
 [Quick Start](#quick-start) · [Features](#features) · [Changelog](changelogs/) · [API Docs](docs/API.md) · [中文](README.md)
@@ -174,6 +176,36 @@ make installer    # Build Windows exe installer
 > export GOPROXY=https://goproxy.cn,direct
 > npm config set registry https://registry.npmmirror.com
 > ```
+
+## GitHub Actions Automation
+
+The repository now includes two workflows for testing and release packaging:
+
+- `CI` (`.github/workflows/ci.yml`)
+  - Trigger: `push` / `pull_request` / manual dispatch
+  - Runs:
+    - `go vet ./...`
+    - `go test -count=1 -shuffle=on ./...` (`ubuntu/windows` matrix)
+    - `go test -race -covermode=atomic -coverprofile=coverage.out ./...`
+    - frontend `npm ci + npm run build`
+    - backend build with embedded frontend dist (`make backend-only`)
+  - Artifacts:
+    - `go-coverage` (`coverage.out` + `coverage.txt`)
+    - `frontend-dist`
+    - `clawpanel-linux-amd64-ci` for quick validation
+- `Release Build` (`.github/workflows/release.yml`)
+  - Trigger: `push` tag `v*` (for example `v5.1.0`) / manual dispatch
+  - Runs: automatic multi-platform binaries (`linux/darwin/windows`) + Windows installer `ClawPanel-Setup-v{version}.exe`
+  - Publish: for tag runs, assets are uploaded to GitHub Releases with `checksums.txt`
+
+Additionally, `Dependabot` (`.github/dependabot.yml`) checks GitHub Actions dependency updates weekly.
+
+Example:
+
+```bash
+git tag v5.1.0
+git push origin v5.1.0
+```
 
 ## Environment Variables
 

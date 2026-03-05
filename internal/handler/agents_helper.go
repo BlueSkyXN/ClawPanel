@@ -23,6 +23,27 @@ func loadAgentIDs(cfg *config.Config) ([]string, map[string]struct{}) {
 	return collectAgentIDsFromConfigAndDisk(cfg, ocConfig)
 }
 
+func loadDefaultAgentID(cfg *config.Config) string {
+	if isLegacySingleAgentMode() {
+		return "main"
+	}
+	ocConfig, _ := cfg.ReadOpenClawJSON()
+	defaultID := strings.TrimSpace(getDefaultAgentID(ocConfig, parseAgentsListFromConfig(ocConfig)))
+	agentIDs, agentSet := collectAgentIDsFromConfigAndDisk(cfg, ocConfig)
+	if defaultID != "" {
+		if _, ok := agentSet[defaultID]; ok {
+			return defaultID
+		}
+	}
+	for _, id := range agentIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			return id
+		}
+	}
+	return "main"
+}
+
 func collectAgentIDsFromConfigAndDisk(cfg *config.Config, ocConfig map[string]interface{}) ([]string, map[string]struct{}) {
 	agentSet := map[string]struct{}{}
 

@@ -9,6 +9,10 @@ interface AgentItem {
   model?: any;
   tools?: any;
   sandbox?: any;
+  groupChat?: any;
+  identity?: any;
+  subagents?: any;
+  params?: any;
   default?: boolean;
   sessions?: number;
   lastActive?: number;
@@ -22,6 +26,10 @@ interface AgentFormState {
   modelText: string;
   toolsText: string;
   sandboxText: string;
+  groupChatText: string;
+  identityText: string;
+  subagentsText: string;
+  paramsText: string;
 }
 
 interface BindingDraft {
@@ -56,6 +64,10 @@ export default function Agents() {
     modelText: '',
     toolsText: '',
     sandboxText: '',
+    groupChatText: '',
+    identityText: '',
+    subagentsText: '',
+    paramsText: '',
   });
 
   const [previewMeta, setPreviewMeta] = useState<Record<string, string>>({
@@ -118,6 +130,10 @@ export default function Agents() {
       modelText: '',
       toolsText: '',
       sandboxText: '',
+      groupChatText: '',
+      identityText: '',
+      subagentsText: '',
+      paramsText: '',
     });
     setShowForm(true);
   };
@@ -132,6 +148,10 @@ export default function Agents() {
       modelText: agent.model ? JSON.stringify(agent.model, null, 2) : '',
       toolsText: agent.tools ? JSON.stringify(agent.tools, null, 2) : '',
       sandboxText: agent.sandbox ? JSON.stringify(agent.sandbox, null, 2) : '',
+      groupChatText: agent.groupChat ? JSON.stringify(agent.groupChat, null, 2) : '',
+      identityText: agent.identity ? JSON.stringify(agent.identity, null, 2) : '',
+      subagentsText: agent.subagents ? JSON.stringify(agent.subagents, null, 2) : '',
+      paramsText: agent.params ? JSON.stringify(agent.params, null, 2) : '',
     });
     setShowForm(true);
   };
@@ -155,10 +175,18 @@ export default function Agents() {
     let modelObj: any;
     let toolsObj: any;
     let sandboxObj: any;
+    let groupChatObj: any;
+    let identityObj: any;
+    let subagentsObj: any;
+    let paramsObj: any;
     try {
       modelObj = parseJSONText(form.modelText, 'model');
       toolsObj = parseJSONText(form.toolsText, 'tools');
       sandboxObj = parseJSONText(form.sandboxText, 'sandbox');
+      groupChatObj = parseJSONText(form.groupChatText, 'groupChat');
+      identityObj = parseJSONText(form.identityText, 'identity');
+      subagentsObj = parseJSONText(form.subagentsText, 'subagents');
+      paramsObj = parseJSONText(form.paramsText, 'params');
     } catch (err) {
       setMsg(String(err));
       return;
@@ -173,6 +201,10 @@ export default function Agents() {
     if (modelObj !== undefined) payload.model = modelObj;
     if (toolsObj !== undefined) payload.tools = toolsObj;
     if (sandboxObj !== undefined) payload.sandbox = sandboxObj;
+    if (groupChatObj !== undefined) payload.groupChat = groupChatObj;
+    if (identityObj !== undefined) payload.identity = identityObj;
+    if (subagentsObj !== undefined) payload.subagents = subagentsObj;
+    if (paramsObj !== undefined) payload.params = paramsObj;
 
     setSaving(true);
     try {
@@ -535,6 +567,44 @@ export default function Agents() {
                     rows={8}
                     value={form.sandboxText}
                     onChange={e => setForm(prev => ({ ...prev, sandboxText: e.target.value }))}
+                    className="w-full mt-1 px-2 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500">groupChat (JSON)</label>
+                  <textarea
+                    rows={6}
+                    value={form.groupChatText}
+                    onChange={e => setForm(prev => ({ ...prev, groupChatText: e.target.value }))}
+                    className="w-full mt-1 px-2 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">identity (JSON)</label>
+                  <textarea
+                    rows={6}
+                    value={form.identityText}
+                    onChange={e => setForm(prev => ({ ...prev, identityText: e.target.value }))}
+                    className="w-full mt-1 px-2 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">subagents (JSON)</label>
+                  <textarea
+                    rows={6}
+                    value={form.subagentsText}
+                    onChange={e => setForm(prev => ({ ...prev, subagentsText: e.target.value }))}
+                    className="w-full mt-1 px-2 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">params (JSON)</label>
+                  <textarea
+                    rows={6}
+                    value={form.paramsText}
+                    onChange={e => setForm(prev => ({ ...prev, paramsText: e.target.value }))}
                     className="w-full mt-1 px-2 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900"
                   />
                 </div>
