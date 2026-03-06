@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1215,6 +1216,9 @@ func getSudoPass(cfg *config.Config) string {
 }
 
 func buildNapCatInstallScript(cfg *config.Config) string {
+	_, wsToken, _ := cfg.ReadQQChannelState()
+	wsTokenB64 := base64.StdEncoding.EncodeToString([]byte(wsToken))
+
 	return fmt.Sprintf(`
 set -e
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
@@ -1354,13 +1358,13 @@ sleep 5
 
 # Configure OneBot11 WebSocket + HTTP
 echo "🔧 配置 OneBot11 (WS + HTTP)..."
-# Read accessToken from openclaw.json for WS token sync
-OPENCLAW_DIR="${HOME}/.openclaw"
-if [ -f "${OPENCLAW_DIR}/openclaw.json" ]; then
-  WS_TOKEN=$(python3 -c "import json,sys; d=json.load(open('${OPENCLAW_DIR}/openclaw.json')); print(d.get('channels',{}).get('qq',{}).get('accessToken',''))" 2>/dev/null || echo "")
-else
-  WS_TOKEN=""
-fi
+export WS_TOKEN_B64=%q
+WS_TOKEN_JSON=$(python3 - <<'PY'
+import base64, json, os
+token = base64.b64decode(os.environ.get("WS_TOKEN_B64", "")).decode("utf-8")
+print(json.dumps(token), end="")
+PY
+)
 
 docker exec openclaw-qq bash -c "cat > /app/napcat/config/onebot11.json << OBEOF
 {
@@ -1370,7 +1374,7 @@ docker exec openclaw-qq bash -c "cat > /app/napcat/config/onebot11.json << OBEOF
       \"enable\": true,
       \"host\": \"0.0.0.0\",
       \"port\": 3001,
-      \"token\": \"${WS_TOKEN}\",
+      \"token\": ${WS_TOKEN_JSON},
       \"reportSelfMessage\": true,
       \"enableForcePushEvent\": true,
       \"messagePostFormat\": \"array\",
@@ -1441,7 +1445,7 @@ fi
 
 echo "✅ NapCat (QQ个人号) 安装完成"
 echo "📝 请在通道管理中扫码登录 QQ"
-`, cfg.OpenClawDir, cfg.OpenClawWork)
+`, cfg.OpenClawDir, cfg.OpenClawWork, wsTokenB64)
 }
 
 // getNapCatShellDir returns the NapCat Shell installation directory on Windows, or "" if not found

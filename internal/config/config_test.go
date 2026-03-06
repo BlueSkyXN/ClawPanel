@@ -203,3 +203,33 @@ func TestWriteOpenClawJSONNormalizesLegacyPanelFields(t *testing.T) {
 		t.Fatalf("messages.maxHistoryMessages should be removed")
 	}
 }
+
+func TestReadQQChannelStateSupportsJSON5(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &Config{OpenClawDir: dir}
+
+	raw := `{
+  channels: {
+    qq: {
+      enabled: true,
+      accessToken: "qq-token",
+    },
+  },
+}`
+	if err := os.WriteFile(filepath.Join(dir, "openclaw.json"), []byte(raw), 0644); err != nil {
+		t.Fatalf("write openclaw.json: %v", err)
+	}
+
+	enabled, token, err := cfg.ReadQQChannelState()
+	if err != nil {
+		t.Fatalf("ReadQQChannelState failed: %v", err)
+	}
+	if !enabled {
+		t.Fatalf("expected qq channel to be enabled")
+	}
+	if token != "qq-token" {
+		t.Fatalf("expected qq access token to be preserved, got %q", token)
+	}
+}

@@ -16,28 +16,27 @@ import (
 
 // Listener monitors OneBot11 WebSocket for message events and records them
 type Listener struct {
-	db      *sql.DB
-	hub     *websocket.Hub
-	wsURL   string
-	token   string
-	conn    *gorilla.Conn
-	mu      sync.Mutex
-	stopCh  chan struct{}
-	running bool
-	sysLog  *SystemLogger
+	db            *sql.DB
+	hub           *websocket.Hub
+	wsURL         string
+	token         string
+	tokenProvider func() string
+	conn          *gorilla.Conn
+	mu            sync.Mutex
+	stopCh        chan struct{}
+	running       bool
+	sysLog        *SystemLogger
 }
 
 // NewListener creates a new event listener
-func NewListener(db *sql.DB, hub *websocket.Hub, wsURL string, token ...string) *Listener {
+func NewListener(db *sql.DB, hub *websocket.Hub, wsURL string, tokenProvider func() string) *Listener {
 	l := &Listener{
-		db:     db,
-		hub:    hub,
-		wsURL:  wsURL,
-		stopCh: make(chan struct{}),
-		sysLog: NewSystemLogger(db, hub),
-	}
-	if len(token) > 0 {
-		l.token = token[0]
+		db:            db,
+		hub:           hub,
+		wsURL:         wsURL,
+		tokenProvider: tokenProvider,
+		stopCh:        make(chan struct{}),
+		sysLog:        NewSystemLogger(db, hub),
 	}
 	return l
 }
@@ -103,10 +102,11 @@ func (l *Listener) connect() error {
 	dialer := gorilla.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 	}
+	token := l.currentToken()
 	var header map[string][]string
-	if l.token != "" {
+	if token != "" {
 		header = map[string][]string{
-			"Authorization": {"Bearer " + l.token},
+			"Authorization": {"Bearer " + token},
 		}
 	}
 	conn, _, err := dialer.Dial(l.wsURL, header)
@@ -119,6 +119,13 @@ func (l *Listener) connect() error {
 	log.Printf("[EventLog] 已连接 OneBot11 WebSocket: %s", l.wsURL)
 	l.sysLog.Log("system", "napcat.connected", "NapCat OneBot11 WebSocket 已连接")
 	return nil
+}
+
+func (l *Listener) currentToken() string {
+	if l.tokenProvider != nil {
+		return strings.TrimSpace(l.tokenProvider())
+	}
+	return strings.TrimSpace(l.token)
 }
 
 func (l *Listener) listen() {

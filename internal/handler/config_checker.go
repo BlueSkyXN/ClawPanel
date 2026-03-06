@@ -19,7 +19,7 @@ import (
 // ConfigIssue represents a detected configuration problem
 type ConfigIssue struct {
 	ID          string `json:"id"`
-	Severity    string `json:"severity"` // error, warning, info
+	Severity    string `json:"severity"`  // error, warning, info
 	Component   string `json:"component"` // napcat, openclaw
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -115,10 +115,10 @@ func FixConfig(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"ok":             true,
-			"fixed":          fixed,
-			"failed":         failed,
-			"napcatRestart":  napcatRestart,
+			"ok":            true,
+			"fixed":         fixed,
+			"failed":        failed,
+			"napcatRestart": napcatRestart,
 		})
 	}
 }
@@ -179,7 +179,7 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 		if napcatInstalled {
 			issues = append(issues, ConfigIssue{
 				ID: "napcat-onebot11-missing", Severity: "error", Component: "napcat",
-				Title: "onebot11.json 配置文件不存在或无法读取",
+				Title:       "onebot11.json 配置文件不存在或无法读取",
 				Description: err.Error(), Fixable: true, FilePath: filePath,
 			})
 		}
@@ -190,9 +190,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 	if network == nil {
 		issues = append(issues, ConfigIssue{
 			ID: "napcat-no-network", Severity: "error", Component: "napcat",
-			Title: "缺少 network 配置块",
+			Title:       "缺少 network 配置块",
 			Description: "onebot11.json 中没有 network 字段，WS/HTTP 服务无法启动",
-			Fixable: true, FilePath: filePath,
+			Fixable:     true, FilePath: filePath,
 		})
 		return issues, 1
 	}
@@ -203,9 +203,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 	if len(wsServers) == 0 {
 		issues = append(issues, ConfigIssue{
 			ID: "napcat-no-ws", Severity: "error", Component: "napcat",
-			Title: "WebSocket 服务未配置",
+			Title:       "WebSocket 服务未配置",
 			Description: "未配置 websocketServers，ClawPanel 无法接收消息事件",
-			Fixable: true, FilePath: filePath,
+			Fixable:     true, FilePath: filePath,
 		})
 	} else {
 		for i, ws := range wsServers {
@@ -220,9 +220,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 			if !enabled {
 				issues = append(issues, ConfigIssue{
 					ID: fmt.Sprintf("napcat-ws-%d-disabled", i), Severity: "error", Component: "napcat",
-					Title: fmt.Sprintf("WebSocket 服务 #%d 未启用", i+1),
+					Title:       fmt.Sprintf("WebSocket 服务 #%d 未启用", i+1),
 					Description: "websocketServers[" + fmt.Sprint(i) + "].enable = false",
-					Fixable: true, CurrentVal: "false", ExpectedVal: "true", FilePath: filePath,
+					Fixable:     true, CurrentVal: "false", ExpectedVal: "true", FilePath: filePath,
 				})
 			}
 
@@ -232,9 +232,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 			if port == 0 {
 				issues = append(issues, ConfigIssue{
 					ID: fmt.Sprintf("napcat-ws-%d-noport", i), Severity: "error", Component: "napcat",
-					Title: fmt.Sprintf("WebSocket 服务 #%d 端口未设置", i+1),
+					Title:       fmt.Sprintf("WebSocket 服务 #%d 端口未设置", i+1),
 					Description: "端口为 0 或未设置",
-					Fixable: true, CurrentVal: "0", ExpectedVal: "3001", FilePath: filePath,
+					Fixable:     true, CurrentVal: "0", ExpectedVal: "3001", FilePath: filePath,
 				})
 			}
 
@@ -244,9 +244,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 			if wsHost == "127.0.0.1" {
 				issues = append(issues, ConfigIssue{
 					ID: fmt.Sprintf("napcat-ws-%d-host-loopback", i), Severity: "error", Component: "napcat",
-					Title: "NapCat WebSocket 绑定地址错误",
+					Title:       "NapCat WebSocket 绑定地址错误",
 					Description: "host 为 127.0.0.1 导致 NapCat WebSocket 服务启动失败（显示 undefined:undefined），必须改为 0.0.0.0",
-					Fixable: true, CurrentVal: "127.0.0.1", ExpectedVal: "0.0.0.0", FilePath: filePath,
+					Fixable:     true, CurrentVal: "127.0.0.1", ExpectedVal: "0.0.0.0", FilePath: filePath,
 				})
 			}
 
@@ -258,9 +258,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 				if actualToken != expectedToken {
 					issues = append(issues, ConfigIssue{
 						ID: fmt.Sprintf("napcat-ws-%d-token-mismatch", i), Severity: "error", Component: "napcat",
-						Title: "NapCat WebSocket token 与 openclaw.json 不一致",
+						Title:       "NapCat WebSocket token 与 openclaw.json 不一致",
 						Description: fmt.Sprintf("openclaw.json 中 channels.qq.accessToken=%q，但 NapCat onebot11.json WS token=%q，两者不一致导致 OpenClaw 无法连接 NapCat", expectedToken, actualToken),
-						Fixable: true, CurrentVal: actualToken, ExpectedVal: expectedToken, FilePath: filePath,
+						Fixable:     true, CurrentVal: actualToken, ExpectedVal: expectedToken, FilePath: filePath,
 					})
 				}
 			}
@@ -271,9 +271,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 			if !reportSelfExists || !reportSelf {
 				issues = append(issues, ConfigIssue{
 					ID: fmt.Sprintf("napcat-ws-%d-no-self-msg", i), Severity: "warning", Component: "napcat",
-					Title: "reportSelfMessage 未启用",
+					Title:       "reportSelfMessage 未启用",
 					Description: "Bot 发送的消息不会转发到 WebSocket，活动日志中将看不到 Bot 回复",
-					Fixable: true, CurrentVal: "false", ExpectedVal: "true", FilePath: filePath,
+					Fixable:     true, CurrentVal: "false", ExpectedVal: "true", FilePath: filePath,
 				})
 			}
 		}
@@ -285,9 +285,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 	if len(httpServers) == 0 {
 		issues = append(issues, ConfigIssue{
 			ID: "napcat-no-http", Severity: "warning", Component: "napcat",
-			Title: "HTTP API 服务未配置",
+			Title:       "HTTP API 服务未配置",
 			Description: "未配置 httpServers，部分 Bot 操作（发消息、获取群列表等）将不可用",
-			Fixable: true, FilePath: filePath,
+			Fixable:     true, FilePath: filePath,
 		})
 	} else {
 		for i, hs := range httpServers {
@@ -300,9 +300,9 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 			if !enabled {
 				issues = append(issues, ConfigIssue{
 					ID: fmt.Sprintf("napcat-http-%d-disabled", i), Severity: "warning", Component: "napcat",
-					Title: fmt.Sprintf("HTTP API 服务 #%d 未启用", i+1),
+					Title:       fmt.Sprintf("HTTP API 服务 #%d 未启用", i+1),
 					Description: "httpServers[" + fmt.Sprint(i) + "].enable = false",
-					Fixable: true, CurrentVal: "false", ExpectedVal: "true", FilePath: filePath,
+					Fixable:     true, CurrentVal: "false", ExpectedVal: "true", FilePath: filePath,
 				})
 			}
 		}
@@ -357,9 +357,9 @@ func checkNapCatWebUI(cfg *config.Config) ([]ConfigIssue, int) {
 	if token == "" {
 		issues = append(issues, ConfigIssue{
 			ID: "napcat-webui-no-token", Severity: "warning", Component: "napcat",
-			Title: "NapCat WebUI Token 为空",
+			Title:       "NapCat WebUI Token 为空",
 			Description: "WebUI 没有设置访问令牌，ClawPanel 可能无法调用 NapCat 管理 API",
-			Fixable: true, CurrentVal: "(空)", ExpectedVal: "clawpanel-qq",
+			Fixable:     true, CurrentVal: "(空)", ExpectedVal: "clawpanel-qq",
 			FilePath: filePath,
 		})
 	}
@@ -379,9 +379,9 @@ func checkNapCatWebUI(cfg *config.Config) ([]ConfigIssue, int) {
 			if dockerEnvToken != "" && dockerEnvToken != token {
 				issues = append(issues, ConfigIssue{
 					ID: "napcat-webui-token-mismatch", Severity: "error", Component: "napcat",
-					Title: "WebUI Token 与 Docker 环境变量不一致",
+					Title:       "WebUI Token 与 Docker 环境变量不一致",
 					Description: fmt.Sprintf("webui.json token=\"%s\" 与 Docker WEBUI_TOKEN=\"%s\" 不一致，会导致扫码登录 Unauthorized 错误", token, dockerEnvToken),
-					Fixable: true, CurrentVal: token, ExpectedVal: dockerEnvToken,
+					Fixable:     true, CurrentVal: token, ExpectedVal: dockerEnvToken,
 					FilePath: filePath,
 				})
 			}
@@ -402,7 +402,7 @@ func checkOpenClawConfig(cfg *config.Config) ([]ConfigIssue, int) {
 		if !os.IsNotExist(err) {
 			issues = append(issues, ConfigIssue{
 				ID: "openclaw-config-error", Severity: "error", Component: "openclaw",
-				Title: "openclaw.json 读取失败",
+				Title:       "openclaw.json 读取失败",
 				Description: err.Error(), Fixable: false,
 				FilePath: filepath.Join(cfg.OpenClawDir, "openclaw.json"),
 			})
@@ -416,20 +416,20 @@ func checkOpenClawConfig(cfg *config.Config) ([]ConfigIssue, int) {
 	if models == nil {
 		issues = append(issues, ConfigIssue{
 			ID: "openclaw-no-models", Severity: "warning", Component: "openclaw",
-			Title: "未配置模型提供商",
+			Title:       "未配置模型提供商",
 			Description: "openclaw.json 中没有 models 配置，AI 助手将无法工作",
-			Fixable: false,
-			FilePath: filepath.Join(cfg.OpenClawDir, "openclaw.json"),
+			Fixable:     false,
+			FilePath:    filepath.Join(cfg.OpenClawDir, "openclaw.json"),
 		})
 	} else {
 		providers, _ := models["providers"].(map[string]interface{})
 		if providers == nil || len(providers) == 0 {
 			issues = append(issues, ConfigIssue{
 				ID: "openclaw-no-providers", Severity: "warning", Component: "openclaw",
-				Title: "未配置任何模型提供商",
+				Title:       "未配置任何模型提供商",
 				Description: "models.providers 为空，请在系统配置中添加至少一个模型服务商",
-				Fixable: false,
-				FilePath: filepath.Join(cfg.OpenClawDir, "openclaw.json"),
+				Fixable:     false,
+				FilePath:    filepath.Join(cfg.OpenClawDir, "openclaw.json"),
 			})
 		} else {
 			// Check each provider has apiKey
@@ -443,10 +443,10 @@ func checkOpenClawConfig(cfg *config.Config) ([]ConfigIssue, int) {
 				if apiKey == "" {
 					issues = append(issues, ConfigIssue{
 						ID: "openclaw-provider-" + pid + "-no-key", Severity: "warning", Component: "openclaw",
-						Title: fmt.Sprintf("模型提供商 %s 缺少 API Key", pid),
+						Title:       fmt.Sprintf("模型提供商 %s 缺少 API Key", pid),
 						Description: fmt.Sprintf("providers.%s.apiKey 为空，该提供商的模型将无法使用", pid),
-						Fixable: false,
-						FilePath: filepath.Join(cfg.OpenClawDir, "openclaw.json"),
+						Fixable:     false,
+						FilePath:    filepath.Join(cfg.OpenClawDir, "openclaw.json"),
 					})
 				}
 			}
@@ -465,10 +465,10 @@ func checkOpenClawConfig(cfg *config.Config) ([]ConfigIssue, int) {
 				if primary == "" {
 					issues = append(issues, ConfigIssue{
 						ID: "openclaw-no-primary-model", Severity: "warning", Component: "openclaw",
-						Title: "未设置主模型",
+						Title:       "未设置主模型",
 						Description: "agents.defaults.model.primary 为空，请在系统配置中选择一个主模型",
-						Fixable: false,
-						FilePath: filepath.Join(cfg.OpenClawDir, "openclaw.json"),
+						Fixable:     false,
+						FilePath:    filepath.Join(cfg.OpenClawDir, "openclaw.json"),
 					})
 				}
 			}
@@ -495,10 +495,10 @@ func checkOpenClawConfig(cfg *config.Config) ([]ConfigIssue, int) {
 				if wsUrl == "" {
 					issues = append(issues, ConfigIssue{
 						ID: "openclaw-qq-no-wsurl", Severity: "warning", Component: "openclaw",
-						Title: "QQ 通道缺少 WebSocket 地址",
+						Title:       "QQ 通道缺少 WebSocket 地址",
 						Description: "channels.qq.wsUrl 未配置，QQ 通道将无法连接 NapCat",
-						Fixable: false,
-						FilePath: filepath.Join(cfg.OpenClawDir, "openclaw.json"),
+						Fixable:     false,
+						FilePath:    filepath.Join(cfg.OpenClawDir, "openclaw.json"),
 					})
 				}
 			}
@@ -574,75 +574,69 @@ func fixIssue(issueID string, cfg *config.Config) error {
 // getNapCatExpectedWSToken returns the accessToken that openclaw.json expects NapCat WS to use.
 // If openclaw.json has channels.qq.accessToken set, NapCat WS must use the same token.
 func getNapCatExpectedWSToken(cfg *config.Config) string {
-	ocDir := cfg.OpenClawDir
-	if ocDir == "" {
-		home, _ := os.UserHomeDir()
-		ocDir = filepath.Join(home, ".openclaw")
-	}
-	data, err := os.ReadFile(filepath.Join(ocDir, "openclaw.json"))
+	_, token, err := cfg.ReadQQChannelState()
 	if err != nil {
 		return ""
 	}
-	var ocCfg map[string]interface{}
-	if json.Unmarshal(data, &ocCfg) != nil {
-		return ""
-	}
-	ch, _ := ocCfg["channels"].(map[string]interface{})
-	if ch == nil {
-		return ""
-	}
-	qq, _ := ch["qq"].(map[string]interface{})
-	if qq == nil {
-		return ""
-	}
-	token, _ := qq["accessToken"].(string)
 	return token
 }
 
 func writeDefaultOneBot11Config(cfg *config.Config) error {
 	wsToken := getNapCatExpectedWSToken(cfg)
-	defaultConfig := fmt.Sprintf(`{
-  "network": {
-    "websocketServers": [{
-      "name": "ws-server",
-      "enable": true,
-      "host": "0.0.0.0",
-      "port": 3001,
-      "token": "%s",
-      "reportSelfMessage": true,
-      "enableForcePushEvent": true,
-      "messagePostFormat": "array",
-      "debug": false,
-      "heartInterval": 30000
-    }],
-    "httpServers": [{
-      "name": "http-api",
-      "enable": true,
-      "host": "0.0.0.0",
-      "port": 3000,
-      "token": ""
-    }],
-    "httpSseServers": [],
-    "httpClients": [],
-    "websocketClients": [],
-    "plugins": []
-  },
-  "musicSignUrl": "",
-  "enableLocalFile2Url": true,
-  "parseMultMsg": true,
-  "imageDownloadProxy": ""
-}`, wsToken)
+	defaultConfig, err := marshalDefaultOneBot11Config(wsToken)
+	if err != nil {
+		return err
+	}
 	if runtime.GOOS == "windows" {
 		p, err := napCatConfigPath(cfg, "onebot11.json")
 		if err != nil {
 			return err
 		}
 		os.MkdirAll(filepath.Dir(p), 0755)
-		return os.WriteFile(p, []byte(defaultConfig), 0644)
+		return os.WriteFile(p, defaultConfig, 0644)
 	}
 	cmd := exec.Command("docker", "exec", "openclaw-qq", "bash", "-c",
-		fmt.Sprintf("cat > /app/napcat/config/onebot11.json << 'FIXEOF'\n%s\nFIXEOF", defaultConfig))
+		fmt.Sprintf("cat > /app/napcat/config/onebot11.json << 'FIXEOF'\n%s\nFIXEOF", string(defaultConfig)))
 	return cmd.Run()
+}
+
+func marshalDefaultOneBot11Config(wsToken string) ([]byte, error) {
+	payload := map[string]interface{}{
+		"network": map[string]interface{}{
+			"websocketServers": []map[string]interface{}{
+				{
+					"name":                 "ws-server",
+					"enable":               true,
+					"host":                 "0.0.0.0",
+					"port":                 3001,
+					"token":                wsToken,
+					"reportSelfMessage":    true,
+					"enableForcePushEvent": true,
+					"messagePostFormat":    "array",
+					"debug":                false,
+					"heartInterval":        30000,
+				},
+			},
+			"httpServers": []map[string]interface{}{
+				{
+					"name":   "http-api",
+					"enable": true,
+					"host":   "0.0.0.0",
+					"port":   3000,
+					"token":  "",
+				},
+			},
+			"httpSseServers":   []interface{}{},
+			"httpClients":      []interface{}{},
+			"websocketClients": []interface{}{},
+			"plugins":          []interface{}{},
+		},
+		"musicSignUrl":        "",
+		"enableLocalFile2Url": true,
+		"parseMultMsg":        true,
+		"imageDownloadProxy":  "",
+	}
+	return json.MarshalIndent(payload, "", "  ")
 }
 
 func fixNapCatWSToken(cfg *config.Config) error {

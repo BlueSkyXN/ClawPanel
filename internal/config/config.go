@@ -322,6 +322,24 @@ func (c *Config) ReadOpenClawJSON() (map[string]interface{}, error) {
 	return result, nil
 }
 
+// ReadQQChannelState returns whether the QQ channel is enabled and its access token.
+func (c *Config) ReadQQChannelState() (bool, string, error) {
+	ocConfig, err := c.ReadOpenClawJSON()
+	if err != nil {
+		return false, "", err
+	}
+
+	channels, _ := ocConfig["channels"].(map[string]interface{})
+	qq, _ := channels["qq"].(map[string]interface{})
+	if qq == nil {
+		return false, "", nil
+	}
+
+	enabled, _ := qq["enabled"].(bool)
+	token, _ := qq["accessToken"].(string)
+	return enabled, strings.TrimSpace(token), nil
+}
+
 // WriteOpenClawJSON 写入 openclaw.json
 func (c *Config) WriteOpenClawJSON(data map[string]interface{}) error {
 	c.mu.Lock()
