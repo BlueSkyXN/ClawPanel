@@ -180,6 +180,21 @@ func getDataDir() string {
 // getDefaultOpenClawDir 获取默认 OpenClaw 配置目录
 func getDefaultOpenClawDir() string {
 	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		if runtime.GOOS == "darwin" {
+			home = "/var/root"
+		} else if runtime.GOOS == "windows" {
+			home = os.Getenv("USERPROFILE")
+			if home == "" {
+				home = `C:\Users\Administrator`
+			}
+		} else {
+			home = "/root"
+		}
+	}
 
 	// Build candidate list: check multiple possible locations
 	candidates := []string{
