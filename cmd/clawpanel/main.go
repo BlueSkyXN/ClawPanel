@@ -359,7 +359,7 @@ func runServer(stopCh chan struct{}) {
 		api.GET("/workspace/preview", handler.WorkspacePreview(cfg))
 
 		// 外部日志接口（无需认证）
-		api.POST("/events/log", handler.PostEvent(db))
+		api.POST("/events/log", handler.PostEvent(db, wsHub))
 	}
 
 	// WebSocket 路由（前端连接 /ws?token=...，需通过 JWT 验证）

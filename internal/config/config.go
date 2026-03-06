@@ -84,6 +84,9 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Windows 服务场景下避免误落到 systemprofile
+	cfg.OpenClawDir = resolveOpenClawDir(cfg.OpenClawDir)
+
 	// 路径校验：
 	// 1) 如果配置中的路径是另一个 OS 的路径格式，则重新探测
 	// 2) 如果是相对路径（历史版本遗留），统一升级为绝对路径
@@ -303,7 +306,7 @@ func (c *Config) ReadOpenClawJSON() (map[string]interface{}, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	cfgPath := filepath.Join(c.OpenClawDir, "openclaw.json")
+	cfgPath := filepath.Join(resolveOpenClawDir(c.OpenClawDir), "openclaw.json")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return nil, err
@@ -320,12 +323,50 @@ func (c *Config) WriteOpenClawJSON(data map[string]interface{}) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	resolved := resolveOpenClawDir(c.OpenClawDir)
+	if resolved != "" && resolved != c.OpenClawDir {
+		c.OpenClawDir = resolved
+	}
 	cfgPath := filepath.Join(c.OpenClawDir, "openclaw.json")
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(cfgPath, jsonData, 0644)
+}
+
+func resolveOpenClawDir(current string) string {
+	if current != "" {
+		jsonPath := filepath.Join(current, "openclaw.json")
+		if _, err := os.Stat(jsonPath); err == nil {
+			return current
+		}
+		if runtime.GOOS != "windows" {
+			return current
+		}
+		lower := strings.ToLower(current)
+		if !strings.Contains(lower, "systemprofile") && !strings.Contains(lower, "system32") {
+			return current
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		for _, userHome := range getWindowsUserHomes() {
+			candidate := filepath.Join(userHome, ".openclaw")
+			if _, err := os.Stat(filepath.Join(candidate, "openclaw.json")); err == nil {
+				return candidate
+			}
+		}
+		legacy := `C:\ClawPanel\openclaw`
+		if _, err := os.Stat(filepath.Join(legacy, "openclaw.json")); err == nil {
+			return legacy
+		}
+	}
+
+	if current != "" {
+		return current
+	}
+	return getDefaultOpenClawDir()
 }
 
 // isStaleOSPath 检测配置文件里的路径是否来自另一个 OS（跨平台路径污染）

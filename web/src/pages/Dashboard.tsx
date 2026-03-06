@@ -42,7 +42,8 @@ export default function Dashboard({ ws }: DashboardProps) {
   const adm = status?.admin || {};
 
   const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-  const todayLogs = ws.logEntries.filter(e => e.time >= todayStart.getTime());
+  const filteredLogs = ws.logEntries.filter(e => !isNoiseEvent(e));
+  const todayLogs = filteredLogs.filter(e => e.time >= todayStart.getTime());
   const qqCount = todayLogs.filter(e => e.source === 'qq').length;
   const botCount = todayLogs.filter(e => e.source === 'openclaw').length;
 
@@ -188,7 +189,7 @@ export default function Dashboard({ ws }: DashboardProps) {
             </div>
             <div>
               <h3 className="font-bold text-sm text-gray-900 dark:text-white">{t.dashboard.recentActivity}</h3>
-              <p className="text-[10px] text-gray-500">{t.dashboard.realtimeLog} ({ws.logEntries.length})</p>
+               <p className="text-[10px] text-gray-500">{t.dashboard.realtimeLog} ({filteredLogs.length})</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -203,13 +204,13 @@ export default function Dashboard({ ws }: DashboardProps) {
           </div>
         </div>
         <div ref={logRef} className="flex-1 overflow-y-auto min-h-0 p-2 space-y-0.5">
-          {ws.logEntries.length === 0 && (
+          {filteredLogs.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-2">
               <Clock size={32} className="opacity-20" />
               <p className="text-xs">{t.dashboard.noActivity}</p>
             </div>
           )}
-          {ws.logEntries.slice(0, 100).map((entry) => (
+          {filteredLogs.slice(0, 100).map((entry) => (
             <div key={entry.id} className="group">
               <div
                 className={`flex items-start gap-3 py-2 px-3 rounded-lg cursor-pointer transition-all duration-200 text-xs border border-transparent
@@ -308,4 +309,8 @@ function formatUptime(s: number, t: any) {
   if (s < 3600) return `${Math.floor(s / 60)}${t.dashboard.minutes}`;
   if (s < 86400) return `${Math.floor(s / 3600)}${t.dashboard.hours}${Math.floor((s % 3600) / 60)}${t.dashboard.minutes}`;
   return `${Math.floor(s / 86400)}${t.dashboard.days}${Math.floor((s % 86400) / 3600)}${t.dashboard.hours}`;
+}
+
+function isNoiseEvent(entry: { source: string; type: string; summary: string }) {
+  return entry.source === 'qq' && entry.type === 'notice.notify';
 }

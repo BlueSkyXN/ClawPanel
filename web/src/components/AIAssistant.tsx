@@ -36,6 +36,29 @@ export default function AIAssistant() {
   const dragOffset = useRef({ x: 0, y: 0 });
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0 });
 
+  const loadModelConfig = useCallback(async () => {
+    try {
+      const r = await api.getOpenClawConfig();
+      if (!r.ok) return null;
+
+      const nextProviders = r.config?.models?.providers || {};
+      const nextPrimary = r.config?.agents?.defaults?.model?.primary || '';
+      setProviders(nextProviders);
+      setPrimaryModel(nextPrimary);
+
+      if (providerId && modelId) {
+        const models = nextProviders?.[providerId]?.models || [];
+        const exists = models.some((m: any) => (typeof m === 'string' ? m : m?.id) === modelId);
+        if (!exists) {
+          setProviderId('');
+          setModelId('');
+        }
+      }
+      return { providers: nextProviders, primary: nextPrimary };
+    } catch {}
+    return null;
+  }, [providerId, modelId]);
+
   // Initialize position to bottom-right
   useEffect(() => {
     if (open && pos.x === -1) {
@@ -46,14 +69,9 @@ export default function AIAssistant() {
   // Load model config
   useEffect(() => {
     if (open) {
-      api.getOpenClawConfig().then(r => {
-        if (r.ok) {
-          setProviders(r.config?.models?.providers || {});
-          setPrimaryModel(r.config?.agents?.defaults?.model?.primary || '');
-        }
-      }).catch(() => {});
+      loadModelConfig();
     }
-  }, [open]);
+  }, [open, loadModelConfig]);
 
   // Auto-scroll
   useEffect(() => {
@@ -112,8 +130,21 @@ export default function AIAssistant() {
     setLoading(true);
 
     try {
+      let effectiveProviderId = providerId;
+      let effectiveModelId = modelId;
+      const latest = await loadModelConfig();
+
+      if (latest && effectiveProviderId && effectiveModelId) {
+        const models = latest.providers?.[effectiveProviderId]?.models || [];
+        const exists = models.some((m: any) => (typeof m === 'string' ? m : m?.id) === effectiveModelId);
+        if (!exists) {
+          effectiveProviderId = '';
+          effectiveModelId = '';
+        }
+      }
+
       const chatHistory = [...messages, userMsg].slice(-20).map(m => ({ role: m.role, content: m.content }));
-      const r = await api.aiChat(chatHistory, providerId || undefined, modelId || undefined);
+      const r = await api.aiChat(chatHistory, effectiveProviderId || undefined, effectiveModelId || undefined);
       if (r.ok && r.reply) {
         setMessages(prev => [...prev, { role: 'assistant', content: r.reply, time: Date.now() }]);
       } else {

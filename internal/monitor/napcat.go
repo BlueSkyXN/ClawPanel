@@ -56,11 +56,11 @@ type NapCatMonitor struct {
 	maxLogs        int
 	stopCh         chan struct{}
 	running        bool
-	paused         bool // true when QQ channel is disabled — skip checks
+	paused         bool          // true when QQ channel is disabled — skip checks
 	checkInterval  time.Duration
-	reconnecting   bool // true while a reconnect is in progress
-	offlineCount   int  // consecutive offline checks before triggering reconnect
-	loginFailCount int  // consecutive login check failures before declaring login_expired
+	reconnecting   bool          // true while a reconnect is in progress
+	offlineCount   int           // consecutive offline checks before triggering reconnect
+	loginFailCount int           // consecutive login check failures before declaring login_expired
 }
 
 // NewNapCatMonitor creates a new NapCat monitor
@@ -228,6 +228,7 @@ func (m *NapCatMonitor) checkAndUpdate() {
 
 	// Determine overall status
 	if !containerRunning {
+		m.offlineCount++
 		m.status.Status = "stopped"
 		m.loginFailCount = 0
 	} else if qqLoggedIn {
@@ -251,9 +252,17 @@ func (m *NapCatMonitor) checkAndUpdate() {
 		}
 		m.offlineCount = 0
 	} else if containerRunning {
-		// Container running but services not responding yet (booting up)
+		// Container running but OneBot services (3001/3000) not responding.
+		// If port 6099 is up, NapCat WebUI is alive — it's just waiting for QR scan.
+		// Treat as login_expired (don't auto-restart — user needs to scan QR code).
+		webuiUp := isPortReachable(6099)
 		m.offlineCount++
-		if m.offlineCount <= 3 {
+		if webuiUp {
+			// NapCat is running and reachable — login needed, not a crash
+			m.status.Status = "login_expired"
+			m.loginFailCount++
+			m.offlineCount = 0 // reset so auto-reconnect doesn't fire
+		} else if m.offlineCount <= 3 {
 			// Give it a few checks to boot up before declaring offline
 			m.status.Status = prevStatus // keep previous status
 		} else {
@@ -270,6 +279,15 @@ func (m *NapCatMonitor) checkAndUpdate() {
 	maxReconnect := m.status.MaxReconnect
 	offlineCount := m.offlineCount
 	m.mu.Unlock()
+
+	// When NapCat is running but WS/HTTP not yet listening, ensure network config exists.
+	// This handles the case where QQ just logged in and config was empty.
+	if containerRunning && (!wsConnected || !httpAvailable) && isPortReachable(6099) {
+		napcatDir := findNapCatShellDir(m.cfg)
+		if napcatDir != "" {
+			go ensureNapCatNetworkConfig(napcatDir)
+		}
+	}
 
 	// Broadcast status change
 	if currentStatus != prevStatus {
@@ -294,10 +312,10 @@ func (m *NapCatMonitor) checkAndUpdate() {
 		}
 	}
 
-	// Auto-reconnect: only trigger for "offline" (services down), NOT for "login_expired"
-	// login_expired means container is fine but QQ session expired — restarting container won't help,
-	// the user needs to re-scan QR code.
-	if autoReconnect && currentStatus == "offline" && offlineCount >= 3 {
+	// Auto-reconnect: trigger for "offline" (services down) or "stopped" (process not running).
+	// NOT for "login_expired" — that means NapCat WebUI is up but QQ session expired;
+	// user needs to re-scan QR code.
+	if autoReconnect && (currentStatus == "offline" || currentStatus == "stopped") && offlineCount >= 3 {
 		if reconnectCount < maxReconnect {
 			m.mu.Lock()
 			m.status.Status = "reconnecting"
@@ -354,52 +372,37 @@ func (m *NapCatMonitor) doReconnect(reason string) error {
 		return err
 	}
 
-	// Wait for container to come back up
-	time.Sleep(10 * time.Second)
+	// Wait for NapCat to start — on Windows with schtasks there's a delay before the
+	// process actually launches. Poll port 6099 (WebUI) since 3001/3000 only come up
+	// after QQ login which requires a QR scan.
+	time.Sleep(8 * time.Second)
 
-	// Check if services are back
-	wsOK := false
-	for i := 0; i < 6; i++ {
-		if isPortReachable(3001) {
-			wsOK = true
+	webuiOK := false
+	for i := 0; i < 12; i++ {
+		if isPortReachable(6099) {
+			webuiOK = true
 			break
 		}
 		time.Sleep(5 * time.Second)
 	}
 
-	if wsOK {
+	if webuiOK {
 		rlog.Success = true
-		rlog.Detail = "容器重启成功，WebSocket 服务已恢复"
+		rlog.Detail = "NapCat 已重启，WebUI 已可用，等待 QQ 扫码登录"
 		m.addLog(rlog)
 
-		// Check login status
-		loggedIn, nickname, qqid := checkQQLoginStatus(m.cfg)
 		m.mu.Lock()
-		m.status.WSConnected = true
-		m.status.HTTPAvailable = isPortReachable(3000)
-		m.status.QQLoggedIn = loggedIn
-		m.status.QQNickname = nickname
-		m.status.QQID = qqid
-		if loggedIn {
-			m.status.Status = "online"
-			m.status.LastOnline = time.Now()
-			m.status.ReconnectCount = 0
-		} else {
-			m.status.Status = "login_expired"
-		}
+		m.status.ContainerRunning = true
+		m.status.Status = "login_expired"
 		m.mu.Unlock()
 		m.broadcastStatus()
 
-		if loggedIn {
-			m.sysLog.Log("system", "napcat.reconnected", fmt.Sprintf("NapCat 重连成功，QQ 已上线 (%s: %s)", qqid, nickname))
-		} else {
-			m.sysLog.Log("system", "napcat.reconnected_no_login", "NapCat 容器已重启，但 QQ 需要重新登录")
-		}
+		m.sysLog.Log("system", "napcat.reconnected_no_login", "NapCat 已重启，请扫码登录 QQ")
 		return nil
 	}
 
 	rlog.Success = false
-	rlog.Detail = "容器重启后 WebSocket 服务未恢复"
+	rlog.Detail = "NapCat 重启后 WebUI (port 6099) 未恢复"
 	m.addLog(rlog)
 
 	m.mu.Lock()
@@ -407,8 +410,8 @@ func (m *NapCatMonitor) doReconnect(reason string) error {
 	m.mu.Unlock()
 	m.broadcastStatus()
 
-	m.sysLog.Log("system", "napcat.reconnect_failed", "NapCat 重连后服务未恢复")
-	return fmt.Errorf("WebSocket 服务未恢复")
+	m.sysLog.Log("system", "napcat.reconnect_failed", "NapCat 重连后 WebUI 未恢复")
+	return fmt.Errorf("NapCat WebUI 未恢复")
 }
 
 func (m *NapCatMonitor) addLog(rlog ReconnectLog) {
@@ -446,19 +449,22 @@ func isContainerRunning(name string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
-// isNapCatProcessRunning checks if NapCat is running, platform-aware
+// isNapCatProcessRunning checks if NapCat is running in the interactive session (session 1).
+// On Windows we check for NapCatWinBootMain.exe AND that port 6099 is reachable,
+// because a zombie session-0 process with no port is not "running" for our purposes.
 func isNapCatProcessRunning() bool {
 	if runtime.GOOS == "windows" {
-		// Check for NapCat Shell process on Windows
 		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq NapCatWinBootMain.exe", "/NH").Output()
-		if err == nil && strings.Contains(string(out), "NapCatWinBootMain") {
-			return true
+		if err != nil || !strings.Contains(string(out), "NapCatWinBootMain") {
+			out2, err2 := exec.Command("tasklist", "/FI", "IMAGENAME eq napcat.exe", "/NH").Output()
+			if err2 != nil || !strings.Contains(string(out2), "napcat.exe") {
+				return false
+			}
 		}
-		out2, err := exec.Command("tasklist", "/FI", "IMAGENAME eq napcat.exe", "/NH").Output()
-		if err == nil && strings.Contains(string(out2), "napcat.exe") {
-			return true
-		}
-		return false
+		// Process exists — consider it running only if port 6099 is actually listening.
+		// A zombie NapCat (lost QQ pipe, no port) should be treated as stopped so
+		// the monitor can restart it.
+		return isPortReachable(6099)
 	}
 	return isContainerRunning("openclaw-qq")
 }
@@ -474,43 +480,187 @@ func StopNapCatPlatform() {
 	}
 }
 
-// restartNapCatPlatform restarts NapCat based on platform
+// restartNapCatPlatform restarts NapCat based on platform.
+// On Windows: only kills if port 6099 is already down (NapCat crashed), then relaunches
+// via schtasks in the interactive user session.
 func restartNapCatPlatform(cfg *config.Config) ([]byte, error) {
 	if runtime.GOOS == "windows" {
-		// Kill NapCat processes
-		exec.Command("taskkill", "/F", "/IM", "NapCatWinBootMain.exe").Run()
-		exec.Command("taskkill", "/F", "/IM", "napcat.exe").Run()
-		exec.Command("taskkill", "/F", "/IM", "QQ.exe").Run()
-		time.Sleep(2 * time.Second)
-		// Find and restart NapCat Shell
 		napcatDir := findNapCatShellDir(cfg)
 		if napcatDir == "" {
 			return []byte("NapCat Shell directory not found"), fmt.Errorf("NapCat Shell not installed")
 		}
-		batPath := filepath.Join(napcatDir, "napcat.bat")
-		if _, err := os.Stat(batPath); err == nil {
-			cmd := exec.Command("cmd", "/C", "start", "/B", batPath)
-			cmd.Dir = napcatDir
-			err := cmd.Start()
-			if err != nil {
-				return []byte(err.Error()), err
-			}
-			return []byte("NapCat Shell restarted"), nil
-		}
 		exePath := filepath.Join(napcatDir, "NapCatWinBootMain.exe")
-		if _, err := os.Stat(exePath); err == nil {
-			cmd := exec.Command(exePath)
-			cmd.Dir = napcatDir
-			err := cmd.Start()
-			if err != nil {
-				return []byte(err.Error()), err
-			}
-			return []byte("NapCat Shell restarted"), nil
+		if _, err := os.Stat(exePath); err != nil {
+			return []byte("No NapCatWinBootMain.exe found"), fmt.Errorf("NapCat executable not found")
 		}
-		return []byte("No napcat.bat or NapCatWinBootMain.exe found"), fmt.Errorf("NapCat executable not found")
+		// Only kill if WebUI port is already down — don't destroy a working session-1 instance.
+		if !isPortReachable(6099) {
+			exec.Command("taskkill", "/F", "/IM", "NapCatWinBootMain.exe").Run()
+			exec.Command("taskkill", "/F", "/IM", "napcat.exe").Run()
+			exec.Command("taskkill", "/F", "/IM", "QQ.exe").Run()
+			time.Sleep(3 * time.Second)
+		} else {
+			log.Println("[NapCat] port 6099 is up — skipping kill, NapCat is alive")
+			return []byte("NapCat already running"), nil
+		}
+		// Write network config (WS+HTTP) before launching so NapCat picks it up.
+		ensureNapCatNetworkConfig(napcatDir)
+		if err := launchNapCatInUserSession(exePath, napcatDir); err != nil {
+			return []byte(err.Error()), err
+		}
+		return []byte("NapCat Shell restarted"), nil
 	}
 	// Linux/macOS: Docker
 	return dockerOutput("restart", "openclaw-qq")
+}
+
+// ensureNapCatNetworkConfig writes the OneBot network config (WS+HTTP) for all known
+// QQ UINs found in the NapCat config directory. NapCat reads onebot11_<uin>.json on
+// startup; if the file has an empty network block, ports 3001/3000 will never open.
+func ensureNapCatNetworkConfig(napcatShellDir string) {
+	// Find the inner napcat dir (where config/ lives)
+	innerDir := findNapCatInnerDir(napcatShellDir)
+	if innerDir == "" {
+		innerDir = napcatShellDir
+	}
+	cfgDir := filepath.Join(innerDir, "config")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		log.Printf("[NapCat] ensureNapCatNetworkConfig: mkdir %s: %v", cfgDir, err)
+		return
+	}
+
+	networkCfg := map[string]interface{}{
+		"network": map[string]interface{}{
+			"httpServers": []interface{}{
+				map[string]interface{}{
+					"name":              "ClawPanel-HTTP",
+					"enable":            true,
+					"port":              3000,
+					"host":              "0.0.0.0",
+					"enableCors":        true,
+					"enableWebsocket":   false,
+					"messagePostFormat": "array",
+					"token":             "",
+					"debug":             false,
+				},
+			},
+			"httpSseServers":   []interface{}{},
+			"httpClients":      []interface{}{},
+			"websocketServers": []interface{}{
+				map[string]interface{}{
+					"name":                "ClawPanel-WS",
+					"enable":              true,
+					"port":                3001,
+					"host":                "0.0.0.0",
+					"messagePostFormat":   "array",
+					"token":               "",
+					"reportSelfMessage":   false,
+					"enableForcePushEvent": true,
+					"debug":               false,
+					"heartInterval":       30000,
+				},
+			},
+			"websocketClients": []interface{}{},
+			"plugins":          []interface{}{},
+		},
+		"musicSignUrl":         "",
+		"enableLocalFile2Url":  false,
+		"parseMultMsg":         false,
+		"imageDownloadProxy":   "",
+	}
+	data, _ := json.MarshalIndent(networkCfg, "", "  ")
+
+	// Write for all existing onebot11_<uin>.json files, and also a default napcat.json
+	entries, _ := os.ReadDir(cfgDir)
+	uins := []string{}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "onebot11_") && strings.HasSuffix(name, ".json") {
+			uin := strings.TrimSuffix(strings.TrimPrefix(name, "onebot11_"), ".json")
+			if uin != "" {
+				uins = append(uins, uin)
+			}
+		}
+	}
+	// Also check napcat_<uin>.json to find UINs even if onebot11 file doesn't exist yet
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "napcat_") && strings.HasSuffix(name, ".json") &&
+			!strings.HasPrefix(name, "napcat_protocol_") {
+			uin := strings.TrimSuffix(strings.TrimPrefix(name, "napcat_"), ".json")
+			if uin != "" {
+				found := false
+				for _, u := range uins {
+					if u == uin {
+						found = true
+						break
+					}
+				}
+				if !found {
+					uins = append(uins, uin)
+				}
+			}
+		}
+	}
+
+	// Always write at least one config
+	if len(uins) == 0 {
+		p := filepath.Join(cfgDir, "onebot11.json")
+		if err := os.WriteFile(p, data, 0644); err != nil {
+			log.Printf("[NapCat] write %s: %v", p, err)
+		} else {
+			log.Printf("[NapCat] wrote default network config: %s", p)
+		}
+		return
+	}
+
+	for _, uin := range uins {
+		p := filepath.Join(cfgDir, "onebot11_"+uin+".json")
+		// Only overwrite if network is empty (don't clobber user customisations)
+		existing, err := os.ReadFile(p)
+		if err == nil {
+			var cur map[string]interface{}
+			if json.Unmarshal(existing, &cur) == nil {
+				if net, ok := cur["network"].(map[string]interface{}); ok {
+					wsServers, _ := net["websocketServers"].([]interface{})
+					httpServers, _ := net["httpServers"].([]interface{})
+					if len(wsServers) > 0 || len(httpServers) > 0 {
+						log.Printf("[NapCat] network config already set for UIN %s, skipping", uin)
+						continue
+					}
+				}
+			}
+		}
+		if err := os.WriteFile(p, data, 0644); err != nil {
+			log.Printf("[NapCat] write %s: %v", p, err)
+		} else {
+			log.Printf("[NapCat] wrote network config for UIN %s: %s", uin, p)
+		}
+	}
+}
+
+// findQQInstallDir returns the directory containing QQ.exe by checking running processes
+func findQQInstallDir() string {
+	// Try to find QQ.exe path from running processes via WMIC
+	out, err := exec.Command("wmic", "process", "where", "name='QQ.exe'", "get", "ExecutablePath", "/VALUE").Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(strings.ToLower(line), "executablepath=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 && parts[1] != "" {
+					return filepath.Dir(strings.TrimSpace(parts[1]))
+				}
+			}
+		}
+	}
+	// Common QQ install locations
+	for _, p := range []string{`C:\Program Files\Tencent\QQ`, `D:\QQ`, `C:\QQ`, `D:\Program Files\Tencent\QQ`} {
+		if _, err := os.Stat(filepath.Join(p, "QQ.exe")); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 // findNapCatShellDir finds the NapCat Shell installation directory on Windows
@@ -523,6 +673,9 @@ func findNapCatShellDir(cfg *config.Config) string {
 		`C:\NapCat`,
 		filepath.Join(home, "AppData", "Local", "NapCat"),
 	}
+	// Note: do NOT add the QQ install dir — NapCat Shell is a separate directory.
+	// QQ's own dir may contain NapCatWinBootMain.exe in subdirectories which would
+	// cause us to return the wrong dir.
 	markers := []string{"napcat.bat", "NapCatWinBootMain.exe"}
 	for _, dir := range candidates {
 		if _, err := os.Stat(dir); err != nil {
@@ -550,6 +703,79 @@ func findNapCatShellDir(cfg *config.Config) string {
 	return ""
 }
 
+// launchNapCatInUserSession launches NapCatWinBootMain.exe in the interactive user session.
+// ClawPanel runs as a SYSTEM service (session 0) and cannot directly start GUI processes
+// in session 1. We write a temp .ps1 file and use schtasks to run it as the interactive
+// user, which executes in their desktop session.
+// getInteractiveUsername returns the username of the currently logged-in interactive user.
+func getInteractiveUsername() string {
+	// WMIC outputs UTF-16LE; decode it properly.
+	out, err := exec.Command("wmic", "computersystem", "get", "UserName", "/VALUE").Output()
+	if err == nil {
+		text := decodeUTF16LE(out)
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(strings.ToLower(line), "username=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+					return strings.TrimSpace(parts[1])
+				}
+			}
+		}
+	}
+	// Fallback: qwinsta.exe — shows active console sessions
+	out2, err := exec.Command(`C:\Windows\System32\qwinsta.exe`).Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out2), "\n") {
+			if strings.Contains(line, "Active") || strings.Contains(line, "活动") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					u := strings.TrimPrefix(fields[0], ">")
+					if u != "" && !strings.EqualFold(u, "services") && !strings.EqualFold(u, "console") && !strings.HasPrefix(strings.ToLower(u), "rdp-") {
+						// qwinsta lists session name not username; use field[1] if field[0] looks like session name
+						if strings.HasPrefix(strings.ToLower(u), "console") || strings.HasPrefix(strings.ToLower(u), "rdp") {
+							u = fields[1]
+						}
+						return u
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// decodeUTF16LE decodes a UTF-16LE byte slice to a UTF-8 string.
+// WMIC on Windows outputs UTF-16LE; reading it as []byte gives garbled text.
+func decodeUTF16LE(b []byte) string {
+	// Strip BOM if present
+	if len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE {
+		b = b[2:]
+	}
+	if len(b)%2 != 0 {
+		b = b[:len(b)-1]
+	}
+	u16 := make([]uint16, len(b)/2)
+	for i := range u16 {
+		u16[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
+	}
+	var sb strings.Builder
+	for i := 0; i < len(u16); {
+		c := rune(u16[i])
+		i++
+		if c >= 0xD800 && c <= 0xDBFF && i < len(u16) {
+			low := rune(u16[i])
+			if low >= 0xDC00 && low <= 0xDFFF {
+				c = 0x10000 + (c-0xD800)*0x400 + (low - 0xDC00)
+				i++
+			}
+		}
+		sb.WriteRune(c)
+	}
+	return sb.String()
+}
+
+
 func isPortReachable(port int) bool {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 3*time.Second)
 	if err != nil {
@@ -573,25 +799,111 @@ func checkQQLoginStatus(cfg *config.Config) (loggedIn bool, nickname string, qqI
 	return
 }
 
+// readTokenFromNapCatLogs finds NapCat's logs dir (walking up/down from bootmain dir)
+// and extracts the live token logged as "[WebUi] WebUi Token: <token>".
+func readTokenFromNapCatLogs(bootmainDir string) string {
+	// Walk down from bootmain dir looking for a logs/ directory with .log files
+	logsDir := ""
+	filepath.WalkDir(bootmainDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || logsDir != "" {
+			return nil
+		}
+		if d.IsDir() && strings.EqualFold(d.Name(), "logs") {
+			entries, _ := os.ReadDir(path)
+			for _, e := range entries {
+				if strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+					logsDir = path
+					return filepath.SkipAll
+				}
+			}
+		}
+		return nil
+	})
+	// Also walk up parent dirs
+	if logsDir == "" {
+		dir := bootmainDir
+		for i := 0; i < 8; i++ {
+			candidate := filepath.Join(dir, "logs")
+			if entries, err := os.ReadDir(candidate); err == nil {
+				for _, e := range entries {
+					if strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+						logsDir = candidate
+						break
+					}
+				}
+			}
+			if logsDir != "" {
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	if logsDir == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		return ""
+	}
+	var newest os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+			if newest == nil || e.Name() > newest.Name() {
+				newest = e
+			}
+		}
+	}
+	if newest == nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(logsDir, newest.Name()))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if idx := strings.Index(line, "[WebUi] WebUi Token: "); idx >= 0 {
+			tok := strings.TrimSpace(line[idx+len("[WebUi] WebUi Token: "):])
+			if tok != "" {
+				return tok
+			}
+		}
+	}
+	return ""
+}
+
 func doCheckQQLoginStatus(cfg *config.Config) (loggedIn bool, nickname string, qqID string) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	// Use cached credential if available and fresh (< 10 minutes)
+	// Use cached credential if available and fresh (< 5 minutes)
+	// NapCat 4.x generates a new random token each startup — clear cache when it changes.
 	cred := ""
-	if cachedMonitorCred != "" && time.Since(cachedMonitorCredTime) < 10*time.Minute {
+	if cachedMonitorCred != "" && time.Since(cachedMonitorCredTime) < 5*time.Minute {
 		cred = cachedMonitorCred
 	} else {
-		// Get WebUI token: from local config file on Windows, from Docker on Linux
+		// Invalidate cache unconditionally so we always re-auth with the fresh token
+		cachedMonitorCred = ""
+		// Get WebUI token: from NapCat log (4.x uses random token per startup), or Docker
 		token := ""
 		if runtime.GOOS == "windows" {
 			napcatDir := findNapCatShellDir(cfg)
 			if napcatDir != "" {
-				webuiPath := filepath.Join(napcatDir, "config", "webui.json")
-				if data, err := os.ReadFile(webuiPath); err == nil {
-					var webui map[string]interface{}
-					if json.Unmarshal(data, &webui) == nil {
-						if t, ok := webui["token"].(string); ok && t != "" {
-							token = t
+				// NapCat 4.x: read token from latest log file
+				if tok := readTokenFromNapCatLogs(napcatDir); tok != "" {
+					token = tok
+				}
+				// Fallback: webui.json in bootmain config
+				if token == "" {
+					webuiPath := filepath.Join(napcatDir, "config", "webui.json")
+					if data, err := os.ReadFile(webuiPath); err == nil {
+						var webui map[string]interface{}
+						if json.Unmarshal(data, &webui) == nil {
+							if t, ok := webui["token"].(string); ok && t != "" {
+								token = t
+							}
 						}
 					}
 				}

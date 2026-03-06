@@ -52,6 +52,30 @@ export function useWebSocket() {
     }).catch(() => {});
   }, []);
 
+  // Fallback polling: merge latest events in case websocket misses a push
+  useEffect(() => {
+    if (IS_DEMO) return;
+
+    const poll = () => {
+      api.getEvents({ limit: 80 }).then(r => {
+        if (!r.ok || !(r.events || r.entries)) return;
+        const incoming: LogEntry[] = (r.events || r.entries) as LogEntry[];
+
+        setLogEntries(prev => {
+          const idSet = new Set(prev.map(item => String(item.id)));
+          const additions = incoming.filter(item => !idSet.has(String(item.id)));
+          if (additions.length === 0) return prev;
+          const merged = [...additions, ...prev];
+          merged.sort((a, b) => b.time - a.time);
+          return merged.slice(0, 500);
+        });
+      }).catch(() => {});
+    };
+
+    const t = setInterval(poll, 3000);
+    return () => clearInterval(t);
+  }, []);
+
   // Demo mode: simulate periodic new log entries
   useEffect(() => {
     if (!IS_DEMO) return;

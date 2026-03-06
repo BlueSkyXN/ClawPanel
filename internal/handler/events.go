@@ -2,11 +2,13 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zhaoxinyi02/ClawPanel/internal/model"
+	ws "github.com/zhaoxinyi02/ClawPanel/internal/websocket"
 )
 
 // GetEvents 获取事件日志
@@ -45,7 +47,7 @@ func ClearEvents(db *sql.DB) gin.HandlerFunc {
 }
 
 // PostEvent 外部服务提交事件（无需认证）
-func PostEvent(db *sql.DB) gin.HandlerFunc {
+func PostEvent(db *sql.DB, hub *ws.Hub) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Source  string `json:"source"`
@@ -65,15 +67,34 @@ func PostEvent(db *sql.DB) gin.HandlerFunc {
 			req.Type = "openclaw.action"
 		}
 
-		id, err := model.AddEvent(db, &model.Event{
+		e := &model.Event{
 			Source:  req.Source,
 			Type:    req.Type,
 			Summary: req.Summary,
 			Detail:  req.Detail,
-		})
+		}
+
+		id, err := model.AddEvent(db, e)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
+		}
+
+		if hub != nil {
+			entry := map[string]interface{}{
+				"id":      id,
+				"time":    e.Time,
+				"source":  e.Source,
+				"type":    e.Type,
+				"summary": e.Summary,
+				"detail":  e.Detail,
+			}
+			if payload, err := json.Marshal(map[string]interface{}{
+				"type": "log-entry",
+				"data": entry,
+			}); err == nil {
+				hub.Broadcast(payload)
+			}
 		}
 
 		c.JSON(http.StatusOK, gin.H{"ok": true, "id": id})
