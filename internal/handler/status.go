@@ -213,33 +213,7 @@ func onebotApiCallSafe(method, path string, body interface{}) (map[string]interf
 // runCmd runs a command and returns trimmed stdout, or fallback on error
 func runCmd(name string, args ...string) string {
 	cmd := exec.Command(name, args...)
-	home := os.Getenv("HOME")
-	if home == "" {
-		home, _ = os.UserHomeDir()
-	}
-	if home == "" {
-		if runtime.GOOS == "darwin" {
-			home = "/var/root"
-		} else if runtime.GOOS == "windows" {
-			home = os.Getenv("USERPROFILE")
-		} else {
-			home = "/root"
-		}
-	}
-	path := os.Getenv("PATH")
-	if runtime.GOOS == "windows" {
-		if path == "" {
-			path = `C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0\`
-		}
-	} else {
-		extra := []string{"/usr/local/bin", "/usr/local/sbin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/snap/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", filepath.Join(home, ".local", "bin"), filepath.Join(home, ".npm-global", "bin")}
-		if path == "" {
-			path = strings.Join(extra, ":")
-		} else {
-			path = path + ":" + strings.Join(extra, ":")
-		}
-	}
-	cmd.Env = append(os.Environ(), "PATH="+path, "HOME="+home)
+	cmd.Env = config.BuildExecEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		if runtime.GOOS == "darwin" && name != "arch" {

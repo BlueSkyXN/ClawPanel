@@ -112,7 +112,7 @@ func Load() (*Config, error) {
 		}
 	}
 	// 设置默认 App 目录
-	if cfg.OpenClawApp == "" || !dirExists(cfg.OpenClawApp) {
+	if cfg.OpenClawApp == "" || !dirExists(cfg.OpenClawApp) || !fileExists(filepath.Join(cfg.OpenClawApp, "package.json")) {
 		// Try npm global openclaw installation first
 		npmGlobalDir := getNpmGlobalOpenClawDir()
 		cfg.OpenClawApp = findFirstExistingDir(
@@ -405,12 +405,44 @@ func findFirstExistingDir(paths ...string) string {
 // getNpmGlobalOpenClawDir returns the npm global openclaw installation directory
 func getNpmGlobalOpenClawDir() string {
 	// Try npm root -g command first
-	if out, err := exec.Command("npm", "root", "-g").Output(); err == nil {
+	cmd := exec.Command("npm", "root", "-g")
+	cmd.Env = BuildExecEnv()
+	if out, err := cmd.Output(); err == nil {
 		npmRoot := strings.TrimSpace(string(out))
 		if npmRoot != "" {
 			openclawDir := filepath.Join(npmRoot, "openclaw")
 			if dirExists(openclawDir) {
 				return openclawDir
+			}
+		}
+	}
+
+	// Try npm prefix -g command as a fallback
+	cmd = exec.Command("npm", "config", "get", "prefix")
+	cmd.Env = BuildExecEnv()
+	if out, err := cmd.Output(); err == nil {
+		prefix := strings.TrimSpace(string(out))
+		if prefix != "" && prefix != "undefined" {
+			openclawDir := filepath.Join(prefix, "lib", "node_modules", "openclaw")
+			if dirExists(openclawDir) {
+				return openclawDir
+			}
+		}
+	}
+
+	// Scan version manager directories directly (nvm/fnm/volta), independent of PATH.
+	for _, home := range candidateHomes() {
+		patterns := []string{
+			filepath.Join(home, ".nvm", "versions", "node", "*", "lib", "node_modules", "openclaw"),
+			filepath.Join(home, ".local", "share", "fnm", "node-versions", "*", "installation", "lib", "node_modules", "openclaw"),
+			filepath.Join(home, ".fnm", "node-versions", "*", "installation", "lib", "node_modules", "openclaw"),
+			filepath.Join(home, ".volta", "tools", "image", "node", "*", "lib", "node_modules", "openclaw"),
+		}
+		for _, pattern := range patterns {
+			for _, p := range globVersionedDirs(pattern) {
+				if dirExists(p) {
+					return p
+				}
 			}
 		}
 	}
@@ -473,8 +505,17 @@ func (c *Config) OpenClawInstalled() bool {
 			return true
 		}
 	}
-	// 2. 二进制在 PATH 中可用
+	// 1.8 npm 全局/版本管理器目录可探测到 OpenClaw
+	if appDir := getNpmGlobalOpenClawDir(); appDir != "" {
+		if _, err := os.Stat(filepath.Join(appDir, "package.json")); err == nil {
+			return true
+		}
+	}
+	// 2. 二进制在 PATH 中或可探测路径中可用
 	if p, err := exec.LookPath("openclaw"); err == nil && p != "" {
+		return true
+	}
+	if p := DetectOpenClawBinaryPath(); p != "" {
 		return true
 	}
 	// 2.5 常见绝对路径兜底（服务环境 PATH 可能不完整）
@@ -512,7 +553,9 @@ func (c *Config) OpenClawInstalled() bool {
 		// Check Program Files nodejs path
 		winPaths = append(winPaths, `C:\Program Files\nodejs\openclaw.cmd`)
 		// Check npm prefix path
-		if out, err := exec.Command("npm", "config", "get", "prefix").Output(); err == nil {
+		cmd := exec.Command("npm", "config", "get", "prefix")
+		cmd.Env = BuildExecEnv()
+		if out, err := cmd.Output(); err == nil {
 			prefix := strings.TrimSpace(string(out))
 			if prefix != "" {
 				winPaths = append(winPaths, filepath.Join(prefix, "openclaw.cmd"))

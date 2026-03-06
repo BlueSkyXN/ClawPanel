@@ -41,26 +41,7 @@ type OpenClawInstance struct {
 
 func detectCmd(name string, args ...string) string {
 	cmd := exec.Command(name, args...)
-	currentPath := os.Getenv("PATH")
-	if runtime.GOOS == "windows" {
-		// Windows: add npm global bin path
-		home, _ := os.UserHomeDir()
-		extraPaths := strings.Join([]string{
-			filepath.Join(home, "AppData", "Roaming", "npm"),
-			filepath.Join(home, ".local", "bin"),
-			`C:\Program Files\nodejs`,
-		}, ";")
-		cmd.Env = append(os.Environ(), "PATH="+currentPath+";"+extraPaths)
-	} else {
-		home, _ := os.UserHomeDir()
-		extraPaths := "/usr/local/bin:/usr/bin:/bin:/snap/bin"
-		extraPaths += ":" + filepath.Join(home, ".local", "bin")
-		extraPaths += ":" + filepath.Join(home, ".npm-global", "bin")
-		if runtime.GOOS == "darwin" {
-			extraPaths += ":/opt/homebrew/bin:/opt/homebrew/sbin"
-		}
-		cmd.Env = append(os.Environ(), "PATH="+currentPath+":"+extraPaths)
-	}
+	cmd.Env = config.BuildExecEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		if runtime.GOOS == "darwin" && name != "arch" {
@@ -206,7 +187,14 @@ func detectOpenClawVersion(cfg *config.Config) string {
 		}
 	}
 
-	// 2. Try npm global package.json (may fail when running as SYSTEM service)
+	// 2. Try binary path detection independent of PATH (nvm/fnm/service env safe)
+	if bin := config.DetectOpenClawBinaryPath(); bin != "" {
+		if out := detectCmd(bin, "--version"); out != "" {
+			return strings.TrimPrefix(strings.TrimSpace(out), "v")
+		}
+	}
+
+	// 3. Try npm global package.json (may fail when running as SYSTEM service)
 	npmRoot := detectCmd("npm", "root", "-g")
 	if npmRoot != "" {
 		pkgPath := filepath.Join(npmRoot, "openclaw", "package.json")
@@ -215,13 +203,20 @@ func detectOpenClawVersion(cfg *config.Config) string {
 		}
 	}
 
-	// 3. Try openclaw CLI (may not work when running as SYSTEM service)
+	// 3.5 Try common app path discovery from config layer
+	if appDir := configPathDiscoverOpenClawApp(); appDir != "" {
+		if v := readVersionFromPackageJSON(filepath.Join(appDir, "package.json")); v != "" {
+			return v
+		}
+	}
+
+	// 4. Try openclaw CLI (may not work when running as SYSTEM service)
 	ver := detectCmd("openclaw", "--version")
 	if ver != "" {
 		return strings.TrimPrefix(strings.TrimSpace(ver), "v")
 	}
 
-	// 4. Try from config meta.lastTouchedVersion
+	// 5. Try from config meta.lastTouchedVersion
 	ocConfig, _ := cfg.ReadOpenClawJSON()
 	if ocConfig != nil {
 		if meta, ok := ocConfig["meta"].(map[string]interface{}); ok {
@@ -231,7 +226,7 @@ func detectOpenClawVersion(cfg *config.Config) string {
 		}
 	}
 
-	// 4. Try common binary paths
+	// 6. Try common binary paths
 	home, _ := os.UserHomeDir()
 	commonPaths := []string{
 		"/usr/local/bin/openclaw",
@@ -278,7 +273,7 @@ func detectOpenClawVersion(cfg *config.Config) string {
 		}
 	}
 
-	// 5. Try source installs: check common directories for package.json
+	// 7. Try source installs: check common directories for package.json
 	sourcePaths := []string{
 		filepath.Join(os.Getenv("HOME"), "openclaw"),
 		filepath.Join(os.Getenv("HOME"), "openclaw/app"),
@@ -292,13 +287,13 @@ func detectOpenClawVersion(cfg *config.Config) string {
 		}
 	}
 
-	// 6. Try Docker container
+	// 8. Try Docker container
 	dockerVer := detectCmd("docker", "exec", "openclaw", "openclaw", "--version")
 	if dockerVer != "" {
 		return strings.TrimPrefix(strings.TrimSpace(dockerVer), "v")
 	}
 
-	// 7. Try systemd: parse ExecStart from service file to find binary path
+	// 9. Try systemd: parse ExecStart from service file to find binary path
 	svcContent := detectCmd("systemctl", "cat", "openclaw")
 	if svcContent != "" {
 		for _, line := range strings.Split(svcContent, "\n") {
@@ -325,6 +320,20 @@ func detectOpenClawVersion(cfg *config.Config) string {
 	return ""
 }
 
+func configPathDiscoverOpenClawApp() string {
+	// Keep this helper in handler layer so we don't expose internal config methods.
+	// It derives app path from known binary path layout when package.json is missing from cfg.
+	if bin := config.DetectOpenClawBinaryPath(); bin != "" {
+		// .../bin/openclaw -> .../lib/node_modules/openclaw
+		parent := filepath.Dir(filepath.Dir(bin))
+		candidate := filepath.Join(parent, "lib", "node_modules", "openclaw")
+		if info, err := os.Stat(filepath.Join(candidate, "package.json")); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // readVersionFromPackageJSON reads the "version" field from a package.json file
 func readVersionFromPackageJSON(path string) string {
 	data, err := os.ReadFile(path)
@@ -348,17 +357,20 @@ func DetectOpenClawInstances(cfg *config.Config) gin.HandlerFunc {
 
 		// 1. npm global install
 		var npmPath string
-		if runtime.GOOS == "windows" {
-			npmPath = detectCmd("where", "openclaw")
-			// 'where' may return multiple lines, take the first
-			if idx := strings.Index(npmPath, "\n"); idx > 0 {
-				npmPath = strings.TrimSpace(npmPath[:idx])
+		npmPath = config.DetectOpenClawBinaryPath()
+		// Fallback to shell lookup for unusual wrappers
+		if npmPath == "" {
+			if runtime.GOOS == "windows" {
+				npmPath = detectCmd("where", "openclaw")
+				if idx := strings.Index(npmPath, "\n"); idx > 0 {
+					npmPath = strings.TrimSpace(npmPath[:idx])
+				}
+			} else {
+				npmPath = detectCmd("which", "openclaw")
 			}
-		} else {
-			npmPath = detectCmd("which", "openclaw")
 		}
 		if npmPath != "" {
-			ver := detectCmd("openclaw", "--version")
+			ver := detectCmd(npmPath, "--version")
 			instances = append(instances, OpenClawInstance{
 				ID: "npm-global", Type: "npm", Label: "npm 全局安装",
 				Version: ver, Path: npmPath, Active: true, Status: "installed",

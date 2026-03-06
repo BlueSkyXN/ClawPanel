@@ -110,35 +110,7 @@ func (m *Manager) Start() error {
 }
 
 func buildProcessEnv() []string {
-	home := os.Getenv("HOME")
-	if home == "" {
-		home, _ = os.UserHomeDir()
-	}
-	if home == "" {
-		if runtime.GOOS == "darwin" {
-			home = "/var/root"
-		} else if runtime.GOOS == "windows" {
-			home = os.Getenv("USERPROFILE")
-		} else {
-			home = "/root"
-		}
-	}
-
-	path := os.Getenv("PATH")
-	if runtime.GOOS == "windows" {
-		if path == "" {
-			path = `C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0\`
-		}
-	} else {
-		extra := "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin"
-		if path == "" {
-			path = extra
-		} else {
-			path = path + ":" + extra
-		}
-	}
-
-	return append(os.Environ(), "HOME="+home, "PATH="+path)
+	return config.BuildExecEnv()
 }
 
 // Stop 停止 OpenClaw 进程
@@ -733,6 +705,10 @@ func (m *Manager) patchQQPluginChannel(ocDir, installPath string) {
 
 // findOpenClawBin 查找 openclaw 可执行文件
 func (m *Manager) findOpenClawBin() string {
+	if p := config.DetectOpenClawBinaryPath(); p != "" {
+		return p
+	}
+
 	candidates := []string{
 		"openclaw",
 	}
