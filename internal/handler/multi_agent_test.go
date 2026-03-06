@@ -726,6 +726,91 @@ func TestDeleteOpenClawAgentKeepsSessionsWhenConfigWriteFails(t *testing.T) {
 	}
 }
 
+func TestDeleteOpenClawAgentRewritesCronTargets(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "default": true},
+				map[string]interface{}{"id": "work"},
+			},
+		},
+	})
+	writeJSON(t, filepath.Join(dir, "cron", "jobs.json"), map[string]interface{}{
+		"version": 1,
+		"jobs": []interface{}{
+			map[string]interface{}{"id": "job_1", "sessionTarget": "work"},
+			map[string]interface{}{"id": "job_2", "sessionTarget": "main"},
+		},
+	})
+
+	r := gin.New()
+	r.DELETE("/openclaw/agents/:id", DeleteOpenClawAgent(cfg))
+	req := httptest.NewRequest(http.MethodDelete, "/openclaw/agents/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "cron", "jobs.json"))
+	if err != nil {
+		t.Fatalf("read cron jobs: %v", err)
+	}
+	var saved map[string]interface{}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("decode cron jobs: %v", err)
+	}
+	jobs, _ := saved["jobs"].([]interface{})
+	if len(jobs) != 2 {
+		t.Fatalf("expected two jobs, got %d", len(jobs))
+	}
+	job1, _ := jobs[0].(map[string]interface{})
+	if got := strings.TrimSpace(getString(job1, "sessionTarget")); got != "main" {
+		t.Fatalf("expected deleted agent target to fallback to main, got %q", got)
+	}
+}
+
+func TestValidateAgentUniquenessNormalizesPaths(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{OpenClawDir: "/opt/openclaw"}
+	err := validateAgentUniqueness(cfg, []map[string]interface{}{
+		{"id": "main", "workspace": "/data/work/", "agentDir": "agents/main/"},
+	}, "work", "/data/work", "agents/main", "")
+	if err == nil {
+		t.Fatalf("expected normalized path conflict")
+	}
+}
+
+func TestValidateAgentUniquenessRejectsAgentDirOutsideBase(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{OpenClawDir: "/opt/openclaw"}
+	err := validateAgentUniqueness(cfg, []map[string]interface{}{{"id": "main"}}, "work", "workspace/work", "../../tmp/evil", "")
+	if err == nil || !strings.Contains(err.Error(), "agentDir 必须位于 OpenClaw 目录内") {
+		t.Fatalf("expected out-of-base agentDir rejection, got %v", err)
+	}
+}
+
+func TestValidateAgentUniquenessRejectsAbsoluteAliasConflict(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{OpenClawDir: "/opt/openclaw"}
+	err := validateAgentUniqueness(cfg, []map[string]interface{}{
+		{"id": "main", "agentDir": "/opt/openclaw/custom/work-agent"},
+	}, "work", "", "custom/work-agent", "")
+	if err == nil {
+		t.Fatalf("expected absolute alias conflict")
+	}
+}
+
 func TestGetOpenClawAgentsFallsBackToEffectiveDefaultWhenConfiguredDefaultInvalid(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

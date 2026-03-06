@@ -24,35 +24,35 @@ const (
 
 // PluginMeta represents a plugin's metadata (plugin.json)
 type PluginMeta struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Version     string            `json:"version"`
-	Author      string            `json:"author"`
-	Description string            `json:"description"`
-	Homepage    string            `json:"homepage,omitempty"`
-	Repository  string            `json:"repository,omitempty"`
-	License     string            `json:"license,omitempty"`
-	Category    string            `json:"category,omitempty"` // basic, ai, message, fun, tool
-	Tags        []string          `json:"tags,omitempty"`
-	Icon        string            `json:"icon,omitempty"`
-	MinOpenClaw string            `json:"minOpenClaw,omitempty"`
-	MinPanel    string            `json:"minPanel,omitempty"`
-	EntryPoint  string            `json:"entryPoint,omitempty"` // main script file
-	ConfigSchema json.RawMessage  `json:"configSchema,omitempty"` // JSON Schema for config
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Version      string            `json:"version"`
+	Author       string            `json:"author"`
+	Description  string            `json:"description"`
+	Homepage     string            `json:"homepage,omitempty"`
+	Repository   string            `json:"repository,omitempty"`
+	License      string            `json:"license,omitempty"`
+	Category     string            `json:"category,omitempty"` // basic, ai, message, fun, tool
+	Tags         []string          `json:"tags,omitempty"`
+	Icon         string            `json:"icon,omitempty"`
+	MinOpenClaw  string            `json:"minOpenClaw,omitempty"`
+	MinPanel     string            `json:"minPanel,omitempty"`
+	EntryPoint   string            `json:"entryPoint,omitempty"`   // main script file
+	ConfigSchema json.RawMessage   `json:"configSchema,omitempty"` // JSON Schema for config
 	Dependencies map[string]string `json:"dependencies,omitempty"`
-	Permissions  []string         `json:"permissions,omitempty"`
+	Permissions  []string          `json:"permissions,omitempty"`
 }
 
 // InstalledPlugin represents a plugin installed on disk
 type InstalledPlugin struct {
 	PluginMeta
-	Enabled     bool              `json:"enabled"`
-	InstalledAt string            `json:"installedAt"`
-	UpdatedAt   string            `json:"updatedAt,omitempty"`
-	Source      string            `json:"source"` // registry, local, github
-	Dir         string            `json:"dir"`
+	Enabled     bool                   `json:"enabled"`
+	InstalledAt string                 `json:"installedAt"`
+	UpdatedAt   string                 `json:"updatedAt,omitempty"`
+	Source      string                 `json:"source"` // registry, local, github
+	Dir         string                 `json:"dir"`
 	Config      map[string]interface{} `json:"config,omitempty"`
-	LogLines    []string          `json:"logLines,omitempty"`
+	LogLines    []string               `json:"logLines,omitempty"`
 }
 
 // RegistryPlugin represents a plugin in the registry
@@ -70,19 +70,19 @@ type RegistryPlugin struct {
 
 // Registry represents the plugin registry
 type Registry struct {
-	Version     string           `json:"version"`
-	UpdatedAt   string           `json:"updatedAt"`
-	Plugins     []RegistryPlugin `json:"plugins"`
+	Version   string           `json:"version"`
+	UpdatedAt string           `json:"updatedAt"`
+	Plugins   []RegistryPlugin `json:"plugins"`
 }
 
 // Manager handles plugin lifecycle
 type Manager struct {
-	cfg         *config.Config
-	plugins     map[string]*InstalledPlugin
-	registry    *Registry
-	mu          sync.RWMutex
-	pluginsDir  string
-	configFile  string
+	cfg        *config.Config
+	plugins    map[string]*InstalledPlugin
+	registry   *Registry
+	mu         sync.RWMutex
+	pluginsDir string
+	configFile string
 }
 
 // NewManager creates a plugin manager
@@ -181,6 +181,34 @@ func (m *Manager) GetRegistry() *Registry {
 	return &Registry{Plugins: []RegistryPlugin{}}
 }
 
+type pluginInstallStrategy struct {
+	kind   string
+	target string
+}
+
+func resolvePluginInstallStrategy(regPlugin *RegistryPlugin, source string) pluginInstallStrategy {
+	source = strings.TrimSpace(source)
+	if source != "" {
+		if strings.HasPrefix(source, "@") || (!strings.Contains(source, "/") && !strings.HasSuffix(source, ".git") && source != "") {
+			return pluginInstallStrategy{kind: "npm", target: source}
+		}
+		return pluginInstallStrategy{kind: "download", target: source}
+	}
+	if regPlugin == nil {
+		return pluginInstallStrategy{}
+	}
+	if regPlugin.DownloadURL != "" {
+		return pluginInstallStrategy{kind: "download", target: regPlugin.DownloadURL}
+	}
+	if regPlugin.GitURL != "" {
+		return pluginInstallStrategy{kind: "download", target: regPlugin.GitURL}
+	}
+	if regPlugin.NpmPackage != "" {
+		return pluginInstallStrategy{kind: "npm", target: regPlugin.NpmPackage}
+	}
+	return pluginInstallStrategy{}
+}
+
 // Install installs a plugin from registry or URL
 func (m *Manager) Install(pluginID string, source string) error {
 	// Find plugin in registry
@@ -197,12 +225,9 @@ func (m *Manager) Install(pluginID string, source string) error {
 		return fmt.Errorf("插件 %s 不在仓库中，请提供安装源", pluginID)
 	}
 
-	// npm package install path (highest priority)
-	npmPkg := source
-	if npmPkg == "" && regPlugin != nil {
-		npmPkg = regPlugin.NpmPackage
-	}
-	if strings.HasPrefix(npmPkg, "@") || (!strings.Contains(npmPkg, "/") && !strings.HasSuffix(npmPkg, ".git") && npmPkg != "") {
+	strategy := resolvePluginInstallStrategy(regPlugin, source)
+	if strategy.kind == "npm" {
+		npmPkg := strategy.target
 		// Install via npm global
 		if err := m.installFromNpm(npmPkg); err != nil {
 			return fmt.Errorf("npm 安装失败: %v", err)
@@ -242,18 +267,14 @@ func (m *Manager) Install(pluginID string, source string) error {
 		m.plugins[meta.ID] = installed
 		m.mu.Unlock()
 		m.savePluginsState()
+		if err := m.syncOpenClawPluginState(meta.ID, installedDir, installed.Enabled, installed.Source, meta.Version); err != nil {
+			return err
+		}
 		return nil
 	}
 
 	// Determine download URL (git/archive)
-	downloadURL := source
-	if regPlugin != nil {
-		if regPlugin.DownloadURL != "" {
-			downloadURL = regPlugin.DownloadURL
-		} else if regPlugin.GitURL != "" {
-			downloadURL = regPlugin.GitURL
-		}
-	}
+	downloadURL := strategy.target
 
 	if downloadURL == "" {
 		return fmt.Errorf("无法确定插件 %s 的安装方式，请提供 npm 包名或下载地址", pluginID)
@@ -348,6 +369,9 @@ func (m *Manager) Install(pluginID string, source string) error {
 	m.plugins[meta.ID] = installed
 	m.mu.Unlock()
 	m.savePluginsState()
+	if err := m.syncOpenClawPluginState(meta.ID, pluginDir, installed.Enabled, installed.Source, meta.Version); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -402,6 +426,9 @@ func (m *Manager) Uninstall(pluginID string) error {
 	}
 
 	m.savePluginsState()
+	if err := m.removeOpenClawPluginState(pluginID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -415,6 +442,9 @@ func (m *Manager) Enable(pluginID string) error {
 	}
 	p.Enabled = true
 	m.savePluginsStateUnlocked()
+	if err := m.syncOpenClawPluginState(p.ID, p.Dir, true, p.Source, p.Version); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -428,6 +458,9 @@ func (m *Manager) Disable(pluginID string) error {
 	}
 	p.Enabled = false
 	m.savePluginsStateUnlocked()
+	if err := m.syncOpenClawPluginState(p.ID, p.Dir, false, p.Source, p.Version); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -579,6 +612,9 @@ func (m *Manager) scanInstalledPlugins() {
 			continue
 		}
 
+		enabled := true
+		source := "local"
+		version := meta.Version
 		m.mu.Lock()
 		if _, exists := m.plugins[meta.ID]; !exists {
 			m.plugins[meta.ID] = &InstalledPlugin{
@@ -592,8 +628,13 @@ func (m *Manager) scanInstalledPlugins() {
 			// Update dir path and metadata from disk
 			m.plugins[meta.ID].Dir = pluginDir
 			m.plugins[meta.ID].PluginMeta = *meta
+			enabled = m.plugins[meta.ID].Enabled
+			source = m.plugins[meta.ID].Source
 		}
 		m.mu.Unlock()
+		if err := m.syncOpenClawPluginState(meta.ID, pluginDir, enabled, source, version); err != nil {
+			continue
+		}
 	}
 }
 
@@ -658,6 +699,79 @@ func (m *Manager) loadCachedRegistry() *Registry {
 		return &reg
 	}
 	return nil
+}
+
+func (m *Manager) syncOpenClawPluginState(pluginID, installPath string, enabled bool, source string, version string) error {
+	ocConfig, err := m.cfg.ReadOpenClawJSON()
+	if err != nil || ocConfig == nil {
+		ocConfig = map[string]interface{}{}
+	}
+	pl, _ := ocConfig["plugins"].(map[string]interface{})
+	if pl == nil {
+		pl = map[string]interface{}{}
+		ocConfig["plugins"] = pl
+	}
+	ent, _ := pl["entries"].(map[string]interface{})
+	if ent == nil {
+		ent = map[string]interface{}{}
+		pl["entries"] = ent
+	}
+	ent[pluginID] = map[string]interface{}{"enabled": enabled}
+
+	ins, _ := pl["installs"].(map[string]interface{})
+	if ins == nil {
+		ins = map[string]interface{}{}
+		pl["installs"] = ins
+	}
+	item, _ := ins[pluginID].(map[string]interface{})
+	if item == nil {
+		item = map[string]interface{}{}
+		ins[pluginID] = item
+	}
+	if installPath != "" {
+		item["installPath"] = installPath
+	}
+	if normalized := normalizeOpenClawInstallSource(source); normalized != "" {
+		item["source"] = normalized
+	}
+	if version != "" {
+		item["version"] = version
+	}
+	if _, ok := item["installedAt"]; !ok {
+		item["installedAt"] = time.Now().UTC().Format(time.RFC3339)
+	}
+	return m.cfg.WriteOpenClawJSON(ocConfig)
+}
+
+func normalizeOpenClawInstallSource(source string) string {
+	switch strings.TrimSpace(strings.ToLower(source)) {
+	case "npm":
+		return "npm"
+	case "archive":
+		return "archive"
+	case "path", "local", "registry", "custom", "github", "git":
+		return "path"
+	default:
+		return "path"
+	}
+}
+
+func (m *Manager) removeOpenClawPluginState(pluginID string) error {
+	ocConfig, err := m.cfg.ReadOpenClawJSON()
+	if err != nil || ocConfig == nil {
+		return err
+	}
+	pl, _ := ocConfig["plugins"].(map[string]interface{})
+	if pl == nil {
+		return nil
+	}
+	if ent, ok := pl["entries"].(map[string]interface{}); ok {
+		delete(ent, pluginID)
+	}
+	if ins, ok := pl["installs"].(map[string]interface{}); ok {
+		delete(ins, pluginID)
+	}
+	return m.cfg.WriteOpenClawJSON(ocConfig)
 }
 
 func (m *Manager) installFromNpm(pkgName string) error {

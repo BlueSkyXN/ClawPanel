@@ -115,7 +115,7 @@ func GetSessionDetail(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
-		sessionsDir := filepath.Join(cfg.OpenClawDir, "agents", agentID, "sessions")
+		sessionsDir := resolveAgentPath(cfg, agentID, "sessions")
 		sessionFile := filepath.Join(sessionsDir, sessionID+".jsonl")
 
 		if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
@@ -153,7 +153,7 @@ func DeleteSession(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		sessionsPath := filepath.Join(cfg.OpenClawDir, "agents", agentID, "sessions", "sessions.json")
+		sessionsPath := resolveAgentPath(cfg, agentID, "sessions", "sessions.json")
 
 		data, err := os.ReadFile(sessionsPath)
 		if err != nil {
@@ -346,7 +346,7 @@ func countSessionMessages(filePath string) int {
 }
 
 func loadSessionsByAgent(cfg *config.Config, agentID string) []SessionInfo {
-	sessionsPath := filepath.Join(cfg.OpenClawDir, "agents", agentID, "sessions", "sessions.json")
+	sessionsPath := resolveAgentPath(cfg, agentID, "sessions", "sessions.json")
 	data, err := os.ReadFile(sessionsPath)
 	if err != nil {
 		return []SessionInfo{}

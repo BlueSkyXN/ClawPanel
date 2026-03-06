@@ -186,7 +186,7 @@ func runServer(stopCh chan struct{}) {
 			auth.POST("/auth/change-password", handler.ChangePassword(db, cfg))
 
 			// 状态总览
-			auth.GET("/status", handler.GetStatus(db, cfg, procMgr))
+			auth.GET("/status", handler.GetStatus(db, cfg, procMgr, napcatMon))
 
 			// OpenClaw 配置
 			auth.GET("/openclaw/config", handler.GetOpenClawConfig(cfg))

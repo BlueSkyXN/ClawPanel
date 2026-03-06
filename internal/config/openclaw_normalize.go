@@ -186,17 +186,6 @@ func normalizeOpenClawConfig(cfg map[string]interface{}, openClawDir string) boo
 		}
 	}
 
-	if messages, ok := cfg["messages"].(map[string]interface{}); ok && messages != nil {
-		if _, ok := messages["systemPrompt"]; ok {
-			delete(messages, "systemPrompt")
-			changed = true
-		}
-		if _, ok := messages["maxHistoryMessages"]; ok {
-			delete(messages, "maxHistoryMessages")
-			changed = true
-		}
-	}
-
 	return changed
 }
 

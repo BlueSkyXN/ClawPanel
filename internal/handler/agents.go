@@ -149,7 +149,7 @@ func CreateOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 			merged["id"] = id
 			workspace := strings.TrimSpace(toString(merged["workspace"]))
 			agentDir := strings.TrimSpace(toString(merged["agentDir"]))
-			if err := validateAgentUniqueness(list, id, workspace, agentDir, id); err != nil {
+			if err := validateAgentUniqueness(cfg, list, id, workspace, agentDir, id); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 				return
 			}
@@ -157,7 +157,7 @@ func CreateOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 		} else {
 			workspace := strings.TrimSpace(toString(newItem["workspace"]))
 			agentDir := strings.TrimSpace(toString(newItem["agentDir"]))
-			if err := validateAgentUniqueness(list, id, workspace, agentDir, ""); err != nil {
+			if err := validateAgentUniqueness(cfg, list, id, workspace, agentDir, ""); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 				return
 			}
@@ -232,7 +232,7 @@ func UpdateOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 
 		workspace := strings.TrimSpace(toString(merged["workspace"]))
 		agentDir := strings.TrimSpace(toString(merged["agentDir"]))
-		if err := validateAgentUniqueness(list, id, workspace, agentDir, id); err != nil {
+		if err := validateAgentUniqueness(cfg, list, id, workspace, agentDir, id); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
@@ -311,6 +311,11 @@ func DeleteOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 		if defaultID == id {
 			defaultID = pickFallbackDefault(filtered)
 		}
+		cronPath, originalCronData, updatedCronData, cronChanged, err := rewriteCronSessionTargetsForDeletedAgent(cfg, id, defaultID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
 		writeAgentsList(agentsCfg, filtered, defaultID)
 
 		sessionsDir, stagedSessionsDir := "", ""
@@ -323,10 +328,23 @@ func DeleteOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 			}
 		}
 
+		if cronChanged {
+			if err := os.WriteFile(cronPath, updatedCronData, 0644); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": fmt.Sprintf("写入 cron 配置失败: %v", err)})
+				return
+			}
+		}
+
 		if err := cfg.WriteOpenClawJSON(ocConfig); err != nil {
 			if stagedSessionsDir != "" {
 				if restoreErr := os.Rename(stagedSessionsDir, sessionsDir); restoreErr != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": fmt.Sprintf("写入配置失败，且恢复 sessions 失败: %v / %v", err, restoreErr)})
+					return
+				}
+			}
+			if cronChanged {
+				if restoreErr := restoreFile(cronPath, originalCronData); restoreErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": fmt.Sprintf("写入配置失败，且恢复 cron 失败: %v / %v", err, restoreErr)})
 					return
 				}
 			}
@@ -457,7 +475,7 @@ func PreviewOpenClawRoute(cfg *config.Config) gin.HandlerFunc {
 }
 
 func stageAgentSessionsRemoval(cfg *config.Config, agentID string) (string, string, error) {
-	sessionsDir := filepath.Join(cfg.OpenClawDir, "agents", agentID, "sessions")
+	sessionsDir := resolveAgentPath(cfg, agentID, "sessions")
 	info, err := os.Stat(sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -474,6 +492,58 @@ func stageAgentSessionsRemoval(cfg *config.Config, agentID string) (string, stri
 		return "", "", fmt.Errorf("暂存 sessions 目录失败: %w", err)
 	}
 	return sessionsDir, stagedDir, nil
+}
+
+func rewriteCronSessionTargetsForDeletedAgent(cfg *config.Config, deletedAgentID, fallbackAgentID string) (string, []byte, []byte, bool, error) {
+	cronPath := filepath.Join(cfg.OpenClawDir, "cron", "jobs.json")
+	original, err := os.ReadFile(cronPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cronPath, nil, nil, false, nil
+		}
+		return "", nil, nil, false, err
+	}
+
+	var cronData map[string]interface{}
+	if err := json.Unmarshal(original, &cronData); err != nil {
+		return "", nil, nil, false, fmt.Errorf("解析 cron jobs 失败: %w", err)
+	}
+
+	jobs, _ := cronData["jobs"].([]interface{})
+	changed := false
+	for _, rawJob := range jobs {
+		job, ok := rawJob.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(toString(job["sessionTarget"])) != deletedAgentID {
+			continue
+		}
+		job["sessionTarget"] = fallbackAgentID
+		changed = true
+	}
+	if !changed {
+		return cronPath, original, nil, false, nil
+	}
+
+	updated, err := json.MarshalIndent(cronData, "", "  ")
+	if err != nil {
+		return "", nil, nil, false, fmt.Errorf("序列化 cron jobs 失败: %w", err)
+	}
+	return cronPath, original, updated, true, nil
+}
+
+func restoreFile(path string, content []byte) error {
+	if content == nil {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0644)
 }
 
 var bindingMatchAllowedKeys = []string{
@@ -1239,7 +1309,16 @@ func validateAgentID(id string) error {
 	return nil
 }
 
-func validateAgentUniqueness(list []map[string]interface{}, id, workspace, agentDir, skipID string) error {
+func validateAgentUniqueness(cfg *config.Config, list []map[string]interface{}, id, workspace, agentDir, skipID string) error {
+	var err error
+	workspace, err = normalizeAgentPathWithinBase(cfg.OpenClawDir, workspace)
+	if err != nil {
+		return fmt.Errorf("workspace 必须位于 OpenClaw 目录内")
+	}
+	agentDir, err = normalizeAgentPathWithinBase(cfg.OpenClawDir, agentDir)
+	if err != nil {
+		return fmt.Errorf("agentDir 必须位于 OpenClaw 目录内")
+	}
 	for _, item := range list {
 		curID := strings.TrimSpace(toString(item["id"]))
 		if curID == "" || curID == skipID {
@@ -1248,10 +1327,12 @@ func validateAgentUniqueness(list []map[string]interface{}, id, workspace, agent
 		if curID == id {
 			return fmt.Errorf("agent id 已存在: %s", id)
 		}
-		if workspace != "" && workspace == strings.TrimSpace(toString(item["workspace"])) {
+		normalizedWorkspace, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["workspace"]))
+		if err == nil && workspace != "" && workspace == normalizedWorkspace {
 			return fmt.Errorf("workspace 已被占用: %s", workspace)
 		}
-		if agentDir != "" && agentDir == strings.TrimSpace(toString(item["agentDir"])) {
+		normalizedAgentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["agentDir"]))
+		if err == nil && agentDir != "" && agentDir == normalizedAgentDir {
 			return fmt.Errorf("agentDir 已被占用: %s", agentDir)
 		}
 	}
@@ -1286,7 +1367,7 @@ func listContainsAgent(list []map[string]interface{}, agentID string) bool {
 }
 
 func getAgentSessionStats(cfg *config.Config, agentID string) (int, int64) {
-	sessionsPath := filepath.Join(cfg.OpenClawDir, "agents", agentID, "sessions", "sessions.json")
+	sessionsPath := resolveAgentPath(cfg, agentID, "sessions", "sessions.json")
 	data, err := os.ReadFile(sessionsPath)
 	if err != nil {
 		return 0, 0

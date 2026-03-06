@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -114,6 +115,76 @@ func collectAgentIDsFromList(list []map[string]interface{}) ([]string, map[strin
 	}
 	sortAgentIDs(ids)
 	return ids, agentSet
+}
+
+func findAgentConfig(ocConfig map[string]interface{}, agentID string) map[string]interface{} {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil
+	}
+	for _, item := range parseAgentsListFromConfig(ocConfig) {
+		if strings.TrimSpace(toString(item["id"])) == agentID {
+			return item
+		}
+	}
+	return nil
+}
+
+func normalizeAgentPath(baseDir, rawPath string) string {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return ""
+	}
+	if filepath.IsAbs(rawPath) {
+		return filepath.Clean(rawPath)
+	}
+	if baseDir == "" {
+		return filepath.Clean(rawPath)
+	}
+	return filepath.Clean(filepath.Join(baseDir, rawPath))
+}
+
+func isPathWithinBase(baseDir, targetPath string) bool {
+	baseDir = filepath.Clean(baseDir)
+	targetPath = filepath.Clean(targetPath)
+	rel, err := filepath.Rel(baseDir, targetPath)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func normalizeAgentPathWithinBase(baseDir, rawPath string) (string, error) {
+	normalized := normalizeAgentPath(baseDir, rawPath)
+	if normalized == "" {
+		return "", nil
+	}
+	if baseDir != "" && !isPathWithinBase(baseDir, normalized) {
+		return "", errors.New("path escapes base dir")
+	}
+	return normalized, nil
+}
+
+func resolveAgentRootDir(cfg *config.Config, agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return filepath.Join(cfg.OpenClawDir, "agents", "main")
+	}
+	ocConfig, _ := cfg.ReadOpenClawJSON()
+	if item := findAgentConfig(ocConfig, agentID); item != nil {
+		if agentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["agentDir"])); err == nil && agentDir != "" {
+			return agentDir
+		}
+	}
+	return filepath.Join(cfg.OpenClawDir, "agents", agentID)
+}
+
+func resolveAgentPath(cfg *config.Config, agentID string, elems ...string) string {
+	parts := append([]string{resolveAgentRootDir(cfg, agentID)}, elems...)
+	return filepath.Join(parts...)
 }
 
 func collectAgentIDsFromConfigAndDisk(cfg *config.Config, ocConfig map[string]interface{}) ([]string, map[string]struct{}) {

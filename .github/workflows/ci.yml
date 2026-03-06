@@ -193,7 +193,7 @@ jobs:
         run: |
           rm -rf cmd/clawpanel/frontend/dist
           mkdir -p cmd/clawpanel/frontend/dist
-          cp -r web/dist/* cmd/clawpanel/frontend/dist/
+          cp -R web/dist/. cmd/clawpanel/frontend/dist/
 
       - name: Run Go tests with race and coverage
         run: go test -race -covermode=atomic -coverprofile=coverage.out ./...

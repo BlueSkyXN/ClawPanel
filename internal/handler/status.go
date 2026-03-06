@@ -15,13 +15,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zhaoxinyi02/ClawPanel/internal/config"
+	"github.com/zhaoxinyi02/ClawPanel/internal/monitor"
 	"github.com/zhaoxinyi02/ClawPanel/internal/process"
 )
 
 var startTime = time.Now()
 
 // GetStatus 获取系统状态总览
-func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.HandlerFunc {
+func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatMon *monitor.NapCatMonitor) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ocConfig, _ := cfg.ReadOpenClawJSON()
 
@@ -110,7 +111,28 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.Han
 
 		// NapCat 登录状态
 		napcatInfo := gin.H{"connected": false}
-		if loginR, err := napcatApiCallSafe(cfg, "POST", "/api/QQLogin/CheckLoginStatus", nil); err == nil {
+		if napcatMon != nil {
+			monStatus := napcatMon.GetStatus()
+			napcatInfo["connected"] = monStatus.QQLoggedIn
+			if monStatus.QQNickname != "" {
+				napcatInfo["nickname"] = monStatus.QQNickname
+			}
+			if monStatus.QQID != "" {
+				napcatInfo["selfId"] = monStatus.QQID
+			}
+			if monStatus.QQLoggedIn {
+				if groupR, err := onebotApiCallSafe("POST", "/get_group_list", nil); err == nil {
+					if groupData, ok := groupR["data"].([]interface{}); ok {
+						napcatInfo["groupCount"] = len(groupData)
+					}
+				}
+				if friendR, err := onebotApiCallSafe("POST", "/get_friend_list", nil); err == nil {
+					if friendData, ok := friendR["data"].([]interface{}); ok {
+						napcatInfo["friendCount"] = len(friendData)
+					}
+				}
+			}
+		} else if loginR, err := napcatApiCallSafe(cfg, "POST", "/api/QQLogin/CheckLoginStatus", nil); err == nil {
 			if data, ok := loginR["data"].(map[string]interface{}); ok {
 				if isLogin, _ := data["isLogin"].(bool); isLogin {
 					napcatInfo["connected"] = true

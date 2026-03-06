@@ -267,12 +267,6 @@ export default function SystemConfig() {
       if ('secret' in hooks) delete hooks.secret;
     }
 
-    const messages = clone?.messages;
-    if (messages && typeof messages === 'object') {
-      if ('systemPrompt' in messages) delete messages.systemPrompt;
-      if ('maxHistoryMessages' in messages) delete messages.maxHistoryMessages;
-    }
-
     return clone;
   };
 

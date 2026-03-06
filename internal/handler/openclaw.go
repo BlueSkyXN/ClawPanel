@@ -427,7 +427,7 @@ func patchModelsJSON(cfg *config.Config) {
 }
 
 func patchModelsJSONForAgent(cfg *config.Config, agentID string) {
-	modelsPath := filepath.Join(cfg.OpenClawDir, "agents", agentID, "agent", "models.json")
+	modelsPath := resolveAgentPath(cfg, agentID, "agent", "models.json")
 	data, err := os.ReadFile(modelsPath)
 	if err != nil {
 		return
