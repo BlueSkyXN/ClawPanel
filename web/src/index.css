@@ -665,3 +665,108 @@ html.dark .page-modern-danger {
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(248, 113, 113, 0.12));
   color: #fecaca;
 }
+
+@media (max-width: 1023px) {
+  .ui-modern-sidebar {
+    border-right: 1px solid rgba(191, 219, 254, 0.34);
+    box-shadow: 0 28px 70px rgba(15, 23, 42, 0.22);
+  }
+
+  html.dark .ui-modern-sidebar {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 28px 72px rgba(0, 0, 0, 0.4);
+  }
+
+  .page-modern .page-modern-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 0;
+  }
+
+  .page-modern .page-modern-title {
+    font-size: 1.3rem;
+  }
+
+  .page-modern .page-modern-subtitle {
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .page-modern .page-modern-toolbar {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding: 0.4rem;
+    border-radius: 1rem;
+  }
+
+  .page-modern .page-modern-panel {
+    border-radius: 1.25rem;
+  }
+
+  .page-modern-action,
+  .page-modern-accent,
+  .page-modern-control,
+  .page-modern-success,
+  .page-modern-warn,
+  .page-modern-danger {
+    min-height: 2.7rem;
+    padding: 0.72rem 0.9rem;
+    border-radius: 1rem;
+  }
+
+  .page-modern input,
+  .page-modern select,
+  .page-modern textarea {
+    font-size: 16px !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .page-modern {
+    --mobile-card-gap: 0.85rem;
+  }
+
+  .page-modern .page-modern-title {
+    font-size: 1.2rem;
+    line-height: 1.15;
+  }
+
+  .page-modern .page-modern-subtitle {
+    margin-top: 0.28rem;
+    font-size: 0.8rem;
+  }
+
+  .page-modern .page-modern-panel {
+    border-radius: 1.15rem;
+    box-shadow: 0 16px 34px rgba(37, 99, 235, 0.08);
+  }
+
+  .page-modern .grid {
+    gap: var(--mobile-card-gap);
+  }
+
+  .page-modern > .page-modern-header > :last-child {
+    width: 100%;
+  }
+
+  .page-modern-header + .inline-flex,
+  .page-modern-header + .flex {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .page-modern-header + .inline-flex::-webkit-scrollbar,
+  .page-modern-header + .flex::-webkit-scrollbar {
+    display: none;
+  }
+
+  .page-modern .rounded-3xl {
+    border-radius: 1.25rem !important;
+  }
+
+  .page-modern .rounded-2xl {
+    border-radius: 1rem !important;
+  }
+}

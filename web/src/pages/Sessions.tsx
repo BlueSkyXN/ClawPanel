@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import { MessageSquare, Trash2, ChevronLeft, Clock, User, Bot, Loader2, RefreshCw, Search, Hash } from 'lucide-react';
+import MobileActionTray from '../components/MobileActionTray';
 
 interface SessionInfo {
   agentId?: string;
@@ -165,7 +166,7 @@ export default function Sessions() {
           <h2 className={`${modern ? 'page-modern-title text-xl' : 'text-lg font-bold text-gray-900 dark:text-white'}`}>会话管理</h2>
           <p className={`${modern ? 'page-modern-subtitle text-xs mt-0.5' : 'text-xs text-gray-500 mt-0.5'}`}>管理 OpenClaw 的对话会话，查看聊天记录</p>
         </div>
-        <div className="flex items-center gap-2">
+        <MobileActionTray label="会话筛选与操作">
           <select
             value={selectedAgent}
             onChange={e => setSelectedAgent(e.target.value)}
@@ -179,7 +180,7 @@ export default function Sessions() {
           <button onClick={loadSessions} className={`${modern ? 'page-modern-accent px-3.5 py-2 text-xs font-medium' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'}`}>
             <RefreshCw size={14} /> 刷新
           </button>
-        </div>
+        </MobileActionTray>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

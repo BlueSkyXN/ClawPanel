@@ -6,6 +6,7 @@ import {
   CheckCircle2, XCircle, AlertCircle, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import MobileActionTray from '../components/MobileActionTray';
 
 interface CronJob {
   id: string;
@@ -21,7 +22,7 @@ interface CronJob {
 }
 
 export default function CronJobs() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
   const modern = uiMode === 'modern';
   const [jobs, setJobs] = useState<CronJob[]>([]);
@@ -165,7 +166,7 @@ export default function CronJobs() {
           <h2 className={`${modern ? 'page-modern-title' : 'text-xl font-bold text-gray-900 dark:text-white tracking-tight'}`}>{t.cron.title}</h2>
           <p className={`${modern ? 'page-modern-subtitle' : 'text-sm text-gray-500 mt-1'}`}>{t.cron.subtitle}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <MobileActionTray label={locale === 'zh-CN' ? '更多操作' : 'Actions'}>
           <button onClick={loadJobs} className={`${modern ? 'page-modern-action' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} />{t.cron.refreshList}
           </button>
@@ -173,7 +174,7 @@ export default function CronJobs() {
             className={`${modern ? 'page-modern-accent' : 'flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none'}`}>
             <Plus size={14} />{t.cron.newJob}
           </button>
-        </div>
+        </MobileActionTray>
       </div>
 
       {msg && (

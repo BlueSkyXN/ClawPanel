@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useOutletContext, useSearchParams } from 'react-router-dom';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Radio, Wifi, WifiOff, QrCode, Key, Zap, UserCheck, Check, X, Power, Loader2, RefreshCw, LogOut, Sparkles, Download, Package, Wrench, Search, Copy, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -92,15 +92,24 @@ const CHANNEL_DEFS: ChannelDef[] = [
     ] },
   { id: 'dingtalk', label: '钉钉', description: '钉钉机器人 (插件)', type: 'plugin',
     configFields: [
-      { key: 'appKey', label: 'App Key', type: 'text' },
-      { key: 'appSecret', label: 'App Secret', type: 'password' },
-      { key: 'robotCode', label: 'Robot Code', type: 'text' },
+      { key: 'clientId', label: 'Client ID', type: 'text' },
+      { key: 'clientSecret', label: 'Client Secret', type: 'password' },
     ] },
-  { id: 'wecom', label: '企业微信', description: '企业微信应用消息 (插件)', type: 'plugin',
+  { id: 'wecom', label: '企业微信（智能机器人）', description: '企业微信智能机器人，被动回复、群聊友好', type: 'plugin',
     configFields: [
+      { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/wecom' },
+      { key: 'token', label: 'Token', type: 'password' },
+      { key: 'encodingAESKey', label: 'EncodingAESKey', type: 'password', help: '43 位字符' },
+    ] },
+  { id: 'wecom-app', label: '企业微信（自建应用）', description: '企业微信自建应用，支持更完整 API 与微信入口', type: 'plugin',
+    configFields: [
+      { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/wecom-app' },
+      { key: 'token', label: 'Token', type: 'password' },
+      { key: 'encodingAESKey', label: 'EncodingAESKey', type: 'password', help: '43 位字符' },
       { key: 'corpId', label: 'Corp ID', type: 'text' },
+      { key: 'corpSecret', label: 'Corp Secret', type: 'password' },
       { key: 'agentId', label: 'Agent ID', type: 'text' },
-      { key: 'secret', label: 'Secret', type: 'password' },
+      { key: 'apiBaseUrl', label: 'API Base URL', type: 'text', placeholder: 'https://qyapi.weixin.qq.com', help: '可选；VPS 代理时可填写' },
     ] },
   { id: 'msteams', label: 'Microsoft Teams', description: 'Bot Framework (插件)', type: 'plugin',
     configFields: [
@@ -129,6 +138,26 @@ const CHANNEL_DEFS: ChannelDef[] = [
       { key: 'channels', label: '频道', type: 'text', help: '逗号分隔' },
     ] },
 ];
+
+const CHANNEL_REQUIRED_FIELDS: Record<string, string[]> = {
+  telegram: ['token'],
+  discord: ['token', 'applicationId'],
+  irc: ['server', 'nick', 'channels'],
+  slack: ['appToken', 'botToken'],
+  signal: ['apiUrl', 'phoneNumber'],
+  googlechat: ['serviceAccountKey', 'webhookUrl'],
+  bluebubbles: ['serverUrl', 'password'],
+  feishu: ['appId', 'appSecret'],
+  qqbot: ['appId', 'clientSecret'],
+  dingtalk: ['clientId', 'clientSecret'],
+  wecom: ['token', 'encodingAESKey'],
+  'wecom-app': ['token', 'encodingAESKey', 'corpId', 'corpSecret', 'agentId'],
+  msteams: ['appId', 'appPassword'],
+  mattermost: ['url', 'token'],
+  line: ['channelAccessToken', 'channelSecret'],
+  matrix: ['homeserverUrl', 'accessToken'],
+  twitch: ['username', 'oauthToken', 'channels'],
+};
 
 // 飞书双版本：读取当前启用的变体
 function getActiveFeishuVariant(ocConfig: any): 'official' | 'clawteam' | null {
@@ -214,6 +243,7 @@ export default function Channels() {
   const [restarting, setRestarting] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<any[]>([]);
   const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const navigate = useNavigate();
 
   const normalizeChannelQuery = (value: string | null) => {
     if (!value) return '';
@@ -261,7 +291,7 @@ export default function Channels() {
   };
 
   const loadInstalledPlugins = () => {
-    api.getSkills().then((r: any) => { if (r.ok) setInstalledPlugins(r.plugins || []); }).catch(() => {});
+    api.getInstalledPlugins().then((r: any) => { if (r.ok) setInstalledPlugins(r.plugins || []); }).catch(() => {});
   };
 
   const isPluginInstalled = (channelId: string) => {
@@ -271,6 +301,26 @@ export default function Channels() {
     }
     // Check if plugin extension is installed (in extensions dir or plugins.installs)
     return installedPlugins.some((p: any) => p.id === channelId);
+  };
+
+  const validateChannelBeforeEnable = (channelId: string) => {
+    const requiredFields = CHANNEL_REQUIRED_FIELDS[channelId] || [];
+    if (!requiredFields.length) return '';
+    const cfg = ocConfig?.channels?.[channelId] || {};
+    const missingLabels = requiredFields
+      .filter(key => {
+        const value = key.split('.').reduce((obj: any, part: string) => obj?.[part], cfg);
+        return !String(value ?? '').trim();
+      })
+      .map(key => CHANNEL_DEFS.find(ch => ch.id === channelId)?.configFields.find(field => field.key === key)?.label || key);
+    if (missingLabels.length) {
+      const channelLabel = CHANNEL_DEFS.find(ch => ch.id === channelId)?.label || channelId;
+      if (channelId === 'dingtalk') {
+        return '钉钉需要先填写 Client ID 和 Client Secret 才能启用';
+      }
+      return `${channelLabel} 需要先填写：${missingLabels.join('、')}`;
+    }
+    return '';
   };
 
   const reload = () => {
@@ -350,6 +400,14 @@ export default function Channels() {
 
   const handleToggleEnabled = async (channelId: string) => {
     const newEnabled = !isChannelEnabled(channelId);
+    if (newEnabled) {
+      const validationError = validateChannelBeforeEnable(channelId);
+      if (validationError) {
+        setMsg(`❌ ${validationError}`);
+        setTimeout(() => setMsg(''), 5000);
+        return;
+      }
+    }
     try {
       const r = await api.toggleChannel(channelId, newEnabled);
       if (r.ok) {
@@ -714,10 +772,10 @@ export default function Channels() {
                   {installingSw ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                   {installingSw ? '安装中...' : '重新安装 QQ (NapCat)'}
                 </button>
-                <a href="#/plugins" className={`${modern ? 'page-modern-action px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all'}`}>
+                <button onClick={() => navigate('/plugins')} className={`${modern ? 'page-modern-action px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all'}`}>
                   <Package size={16} />
                   前往插件中心
-                </a>
+                </button>
               </div>
             </div>
           )}
@@ -775,10 +833,10 @@ export default function Channels() {
                   需要先安装 {currentDef.label} 插件才能配置此通道。请前往「插件中心」安装。
                 </p>
               </div>
-              <a href="#/plugins" className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}>
+              <button onClick={() => navigate('/plugins')} className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}>
                 <Download size={16} />
                 前往插件中心安装
-              </a>
+              </button>
             </div>
           )}
 
@@ -1035,7 +1093,7 @@ export default function Channels() {
               <form id="channel-config-form" className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5" onSubmit={e => { e.preventDefault(); handleSave(); }}>
                 {currentDef.configFields.map(field => {
                   const currentVal = getFieldValue(currentDef.id, field.key);
-                  const isFullWidth = field.type === 'toggle' || field.key === 'webhookUrl' || field.key === 'token' || field.key === 'accessToken' || field.key === 'appSecret';
+                  const isFullWidth = field.type === 'toggle' || field.key === 'webhookUrl' || field.key === 'webhookPath' || field.key === 'token' || field.key === 'accessToken' || field.key === 'appSecret' || field.key === 'encodingAESKey' || field.key === 'apiBaseUrl';
                   
                   return (
                     <div key={field.key} className={isFullWidth ? "md:col-span-2" : ""}>

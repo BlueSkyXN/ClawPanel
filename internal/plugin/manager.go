@@ -128,6 +128,7 @@ func (m *Manager) GetPlugin(id string) *InstalledPlugin {
 // FetchRegistry fetches the plugin registry from server
 func (m *Manager) FetchRegistry() (*Registry, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
+	bundled := m.loadBundledRegistry()
 
 	// Try mirror first (faster in China), then GitHub
 	urls := []string{RegistryMirrorURL, RegistryURL}
@@ -148,6 +149,7 @@ func (m *Manager) FetchRegistry() (*Registry, error) {
 			lastErr = fmt.Errorf("parse registry: %v", err)
 			continue
 		}
+		reg = mergeRegistries(reg, bundled)
 		m.mu.Lock()
 		m.registry = &reg
 		m.mu.Unlock()
@@ -156,9 +158,18 @@ func (m *Manager) FetchRegistry() (*Registry, error) {
 		return &reg, nil
 	}
 
+	if bundled != nil {
+		m.mu.Lock()
+		m.registry = bundled
+		m.mu.Unlock()
+		m.cacheRegistry(bundled)
+		return bundled, nil
+	}
+
 	// Try cached registry
 	if cached := m.loadCachedRegistry(); cached != nil {
-		return cached, nil
+		merged := mergeRegistries(*cached, bundled)
+		return &merged, nil
 	}
 
 	return nil, fmt.Errorf("获取插件仓库失败: %v", lastErr)
@@ -173,10 +184,18 @@ func (m *Manager) GetRegistry() *Registry {
 		return reg
 	}
 	if cached := m.loadCachedRegistry(); cached != nil {
+		bundled := m.loadBundledRegistry()
+		merged := mergeRegistries(*cached, bundled)
 		m.mu.Lock()
-		m.registry = cached
+		m.registry = &merged
 		m.mu.Unlock()
-		return cached
+		return &merged
+	}
+	if bundled := m.loadBundledRegistry(); bundled != nil {
+		m.mu.Lock()
+		m.registry = bundled
+		m.mu.Unlock()
+		return bundled
 	}
 	return &Registry{Plugins: []RegistryPlugin{}}
 }
@@ -699,6 +718,48 @@ func (m *Manager) loadCachedRegistry() *Registry {
 		return &reg
 	}
 	return nil
+}
+
+func (m *Manager) loadBundledRegistry() *Registry {
+	exePath, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	registryPath := filepath.Join(filepath.Dir(filepath.Dir(exePath)), "plugins", "registry.json")
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		return nil
+	}
+	var reg Registry
+	if json.Unmarshal(data, &reg) == nil {
+		return &reg
+	}
+	return nil
+}
+
+func mergeRegistries(primary Registry, bundled *Registry) Registry {
+	if bundled == nil {
+		return primary
+	}
+	merged := primary
+	index := make(map[string]int, len(merged.Plugins))
+	for i, plugin := range merged.Plugins {
+		index[plugin.ID] = i
+	}
+	for _, plugin := range bundled.Plugins {
+		if idx, ok := index[plugin.ID]; ok {
+			merged.Plugins[idx] = plugin
+		} else {
+			merged.Plugins = append(merged.Plugins, plugin)
+		}
+	}
+	if bundled.Version != "" {
+		merged.Version = bundled.Version
+	}
+	if bundled.UpdatedAt != "" {
+		merged.UpdatedAt = bundled.UpdatedAt
+	}
+	return merged
 }
 
 func (m *Manager) syncOpenClawPluginState(pluginID, installPath string, enabled bool, source string, version string) error {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ScrollText, Radio, Sparkles, Clock, Settings,
   Moon, Sun, LogOut, Menu, FolderOpen, Languages, MessageSquare,
@@ -15,6 +15,7 @@ interface Props { onLogout: () => void; napcatStatus: any; wechatStatus?: any; o
 export default function Layout({ onLogout, napcatStatus, wechatStatus, openclawStatus, processStatus, wsMessages }: Props) {
   const { t, locale, setLocale } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
   const enableAgents = import.meta.env.VITE_FEATURE_AGENTS !== 'false';
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [taskLogs, setTaskLogs] = useState<Record<string, string[]>>({});
@@ -58,6 +59,13 @@ export default function Layout({ onLogout, napcatStatus, wechatStatus, openclawS
     { to: '/cron', icon: Clock, label: t.nav.cronJobs },
     { to: '/sessions', icon: MessageSquare, label: '会话管理' },
     { to: '/workspace', icon: FolderOpen, label: t.nav.workspace },
+    { to: '/config', icon: Settings, label: t.nav.systemConfig },
+  ];
+
+  const mobileNavItems = [
+    { to: '/', icon: LayoutDashboard, label: t.nav.dashboard },
+    { to: '/channels', icon: Radio, label: t.nav.channels },
+    ...(enableAgents ? [{ to: '/agents', icon: Bot, label: locale === 'zh-CN' ? '智能体' : 'Agents' }] : [{ to: '/plugins', icon: Puzzle, label: locale === 'zh-CN' ? '插件' : 'Plugins' }]),
     { to: '/config', icon: Settings, label: t.nav.systemConfig },
   ];
 
@@ -166,8 +174,8 @@ export default function Layout({ onLogout, napcatStatus, wechatStatus, openclawS
 
   return (
     <div className="flex h-screen overflow-hidden ui-modern-shell">
-      {open && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setOpen(false)} />}
-      <aside className={`fixed lg:static inset-y-0 left-0 z-50 w-64 ui-modern-sidebar flex flex-col transition-transform lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+      {open && <div className="fixed inset-0 z-40 bg-slate-950/42 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} />}
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-[88vw] max-w-[320px] flex-col ui-modern-sidebar transition-transform duration-300 lg:static lg:w-64 lg:max-w-none lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand */}
         <div className="px-4 py-4 border-b border-slate-200/70">
           <div className="flex items-center gap-3">
@@ -201,7 +209,7 @@ export default function Layout({ onLogout, napcatStatus, wechatStatus, openclawS
         )}
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto ui-modern-scrollbar">
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3 ui-modern-scrollbar">
           {navItems.map(({ to, icon: Icon, label }) => (
             <NavLink key={to} to={to} end={to === '/'} onClick={() => setOpen(false)}
               className={({ isActive }) =>
@@ -214,7 +222,7 @@ export default function Layout({ onLogout, napcatStatus, wechatStatus, openclawS
         </nav>
 
         {/* Footer */}
-        <div className="p-2 border-t space-y-0.5 border-slate-200/70">
+        <div className="space-y-0.5 border-t border-slate-200/70 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:pb-2">
           <button onClick={toggleLocale} className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 w-full">
             <Languages size={16} />{locale === 'zh-CN' ? 'English' : '中文（简体）'}
           </button>
@@ -318,15 +326,59 @@ export default function Layout({ onLogout, napcatStatus, wechatStatus, openclawS
               </div>
             </div>
           </header>
-        <header className="lg:hidden flex items-center gap-3 p-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-          <button onClick={() => setOpen(true)}><Menu size={20} /></button>
-          <div className="flex items-center gap-2">
-            <img src="/logo.jpg" alt="ClawPanel" className="w-7 h-7 rounded-lg shadow-sm object-cover" />
-            <span className="font-bold text-sm text-gray-900 dark:text-white">ClawPanel</span>
+        <header className="lg:hidden shrink-0 border-b border-blue-100/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(239,246,255,0.74))] px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur-2xl dark:border-blue-400/15 dark:bg-[linear-gradient(180deg,rgba(7,17,31,0.94),rgba(11,26,46,0.88))]">
+          <div className="flex items-center gap-2.5">
+            <button onClick={() => setOpen(true)} className="page-modern-action h-11 w-11 rounded-2xl p-0">
+              <Menu size={19} />
+            </button>
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-2xl border border-blue-100/70 bg-white/60 px-3 py-2.5 shadow-[0_14px_30px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-blue-400/15 dark:bg-slate-900/50">
+              <img src="/logo.jpg" alt="ClawPanel" className="h-9 w-9 rounded-xl object-cover shadow-sm" />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold tracking-tight text-slate-900 dark:text-white">ClawPanel</div>
+                <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{locale === 'zh-CN' ? '移动端控制台' : 'Mobile Console'}</div>
+              </div>
+            </div>
+            <button onClick={toggleDark} className="page-modern-action h-11 w-11 rounded-2xl p-0">
+              {dark ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+            <MessageCenter tasks={tasks} taskLogs={taskLogs} onRefresh={loadTasks} mode="icon" />
+          </div>
+          <div ref={searchRef} className="relative mt-3">
+            <div className="flex items-center gap-3 rounded-2xl border border-blue-100/70 bg-white/64 px-4 py-3 shadow-[0_14px_32px_rgba(15,23,42,0.05)] backdrop-blur-xl dark:border-blue-400/15 dark:bg-slate-900/48">
+              <Search size={16} className="text-slate-400 dark:text-slate-500" />
+              <input value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} onKeyDown={(e) => { if (e.key === 'Enter' && searchResults[0]) handleSearchGo(searchResults[0].path); if (e.key === 'Escape') setSearchOpen(false); }} placeholder={locale === 'zh-CN' ? '搜索页面、功能或通道...' : 'Search pages, features, or channels...'} className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-500 dark:text-slate-100 dark:placeholder:text-slate-500" />
+            </div>
+            {searchOpen && (
+              <div className="absolute left-0 right-0 top-full z-[140] mt-3 overflow-hidden rounded-[24px] border border-blue-100/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.98),rgba(239,246,255,0.92))] shadow-[0_24px_60px_rgba(15,23,42,0.14)] backdrop-blur-xl dark:border-blue-800/30 dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.98),rgba(30,64,175,0.16))]">
+                {searchResults.length === 0 ? <div className="px-4 py-3 text-sm text-slate-500 dark:text-slate-300">未找到匹配页面</div> : searchResults.map(item => (
+                  <button key={item.path + item.label} onClick={() => handleSearchGo(item.path)} className="w-full border-b border-blue-100/60 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-blue-50/70 dark:border-slate-700/70 dark:hover:bg-blue-900/20">
+                    <div className="text-sm font-medium text-slate-800 dark:text-slate-100">{item.label}</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">{item.path}</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </header>
-        <div className="flex-1 overflow-y-auto ui-modern-scrollbar p-4 lg:p-6 xl:p-7"><Outlet context={{ uiMode: 'modern' }} /></div>
+        <div className="flex-1 overflow-y-auto ui-modern-scrollbar p-3 pb-24 sm:p-4 sm:pb-28 lg:p-6 lg:pb-6 xl:p-7"><Outlet context={{ uiMode: 'modern' }} /></div>
       </main>
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-blue-100/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(239,246,255,0.84))] px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-2xl dark:border-blue-400/15 dark:bg-[linear-gradient(180deg,rgba(7,17,31,0.96),rgba(11,26,46,0.92))] lg:hidden">
+        <div className="grid grid-cols-5 gap-2">
+          {mobileNavItems.map(({ to, icon: Icon, label }) => {
+            const active = location.pathname === to || (to !== '/' && location.pathname.startsWith(to));
+            return (
+              <button key={to} onClick={() => handleSearchGo(to)} className={`flex min-h-[62px] flex-col items-center justify-center gap-1 rounded-2xl border text-[11px] font-medium transition-all ${active ? 'border-blue-200/80 bg-[linear-gradient(135deg,rgba(59,130,246,0.18),rgba(14,165,233,0.12))] text-blue-700 shadow-[0_12px_24px_rgba(37,99,235,0.12)] dark:border-blue-400/20 dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.24),rgba(14,165,233,0.12))] dark:text-blue-100' : 'border-transparent bg-white/40 text-slate-500 dark:bg-slate-900/28 dark:text-slate-400'}`}>
+                <Icon size={17} />
+                <span className="truncate px-1">{label}</span>
+              </button>
+            );
+          })}
+          <button onClick={() => setOpen(true)} className="flex min-h-[62px] flex-col items-center justify-center gap-1 rounded-2xl bg-white/40 text-[11px] font-medium text-slate-500 dark:bg-slate-900/28 dark:text-slate-400">
+            <Menu size={17} />
+            <span>{locale === 'zh-CN' ? '更多' : 'More'}</span>
+          </button>
+        </div>
+      </nav>
       <AIAssistant />
     </div>
   );

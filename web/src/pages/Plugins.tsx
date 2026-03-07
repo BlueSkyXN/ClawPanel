@@ -253,7 +253,7 @@ export default function Plugins() {
 
       {/* Toast */}
       {actionMsg && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-in slide-in-from-right ${
+        <div className={`fixed right-4 top-20 sm:top-6 z-[160] px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-in slide-in-from-right ${
           actionMsg.type === 'success'
             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
             : 'bg-red-50 text-red-700 dark:bg-red-900/50 dark:text-red-300'

@@ -6,6 +6,7 @@ import {
   RefreshCw, Package, Globe, Check, Loader2, ExternalLink, X, Key, FolderOpen, Plug,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import MobileActionTray from '../components/MobileActionTray';
 
 interface SkillEntry {
   id: string;
@@ -166,11 +167,11 @@ export default function Skills() {
           <h2 className={`${modern ? 'page-modern-title' : 'text-xl font-bold text-gray-900 dark:text-white tracking-tight'}`}>{t.skills.title}</h2>
           <p className={`${modern ? 'page-modern-subtitle' : 'text-sm text-gray-500 mt-1'}`}>{t.skills.subtitle}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <MobileActionTray label={t.skills.refreshList}>
           <button onClick={loadSkills} className={`${modern ? 'page-modern-action' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} />{t.skills.refreshList}
           </button>
-        </div>
+        </MobileActionTray>
       </div>
 
       {/* Tabs */}

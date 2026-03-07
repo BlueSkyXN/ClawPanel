@@ -9,7 +9,7 @@
 Go 单二进制 · React 18 · TailwindCSS · SQLite · WebSocket 实时推送 · 跨平台
 
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-red?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-5.1.7-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Version](https://img.shields.io/badge/version-5.1.8-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev)
 [![CI](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml)
@@ -258,7 +258,7 @@ make installer    # 构建 Windows exe 安装包
     - `frontend-dist`
     - `clawpanel-linux-amd64-ci`（用于快速验收）
 - `Release Build`（`.github/workflows/release.yml`）
-  - 触发：`push tag v*`（如 `v5.1.7`）/ 手动触发
+  - 触发：`push tag v*`（如 `v5.1.8`）/ 手动触发
   - 执行：自动构建 `linux/darwin/windows` 多平台二进制 + `ClawPanel-Setup-v{version}.exe`
   - 发布：tag 触发时自动上传到 GitHub Release，并生成 `checksums.txt`
 
@@ -267,8 +267,8 @@ make installer    # 构建 Windows exe 安装包
 示例：
 
 ```bash
-git tag v5.1.7
-git push origin v5.1.7
+git tag v5.1.8
+git push origin v5.1.8
 ```
 
 ## 环境变量
@@ -315,6 +315,13 @@ sc query ClawPanel
 ## 更新日志
 
 完整更新日志请查看 [changelogs/](changelogs/) 目录。
+
+### v5.1.8 — 移动端优化、插件中心修正与通道配置收口
+- **📱 移动端体验重做**：新增移动端玻璃顶栏、底部导航、操作托盘与 AI 助手全屏模式，页面不再只是桌面布局压缩
+- **🧊 玻璃风继续统一**：AI 助手入口与悬浮窗、智能体详情标签、多个页面工具栏与操作按钮继续收口到统一蓝色玻璃风
+- **🧩 插件与通道修复**：插件中心作者来源显示规则统一，通道页已安装状态改为和插件中心同源；企业微信拆分为 `智能机器人 / 自建应用`，钉钉切到新版 `Client ID / Client Secret` 配置
+- **🛡️ 配置安全性增强**：为多个通道加入“未完成关键配置不能启用”校验，避免空配置直接打开导致运行异常
+- **🐛 稳定性修复**：修复定时任务页白屏、AI 助手切换模型白屏、插件中心通知被顶栏遮挡等问题
 
 ### v5.1.7 — 现代蓝色玻璃 UI 收口与智能体工作台增强
 - **🎨 现代化界面统一**：面板前端正式收口到 modern-only 方向，整体切到蓝色玻璃风，顶部搜索、头像菜单、右上角消息中心与深色模式质感同步升级

@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Plus, RefreshCw, Save, Trash2, ArrowUp, ArrowDown, Route, Bot, Settings, Brain, Shield, ChevronDown, ChevronRight, Sparkles, FileText } from 'lucide-react';
 import { useI18n } from '../i18n';
+import MobileActionTray from '../components/MobileActionTray';
 
 interface AgentItem {
   id: string;
@@ -1913,14 +1914,14 @@ export default function Agents() {
           <h2 className={`${modern ? 'page-modern-title text-xl' : 'text-xl font-bold text-gray-900 dark:text-white'}`}>{copy.title}</h2>
           <p className={`${modern ? 'page-modern-subtitle text-sm' : 'text-sm text-gray-500 mt-1'}`}>{copy.subtitle}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <MobileActionTray label={locale === 'zh-CN' ? '智能体操作' : 'Agent Actions'}>
           <button onClick={loadData} className={`${modern ? 'page-modern-action px-3 py-2 text-xs' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} /> {copy.refresh}
           </button>
           <button onClick={() => openCreate('basic')} className={`${modern ? 'page-modern-accent' : 'flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all'}`}>
             <Plus size={14} /> {copy.create}
           </button>
-        </div>
+        </MobileActionTray>
       </div>
 
       {msg && (

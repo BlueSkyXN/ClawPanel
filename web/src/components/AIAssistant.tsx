@@ -10,6 +10,26 @@ interface ChatMessage {
   time: number;
 }
 
+function normalizeProviderModels(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  return [];
+}
+
+function toModelOptionValue(pid: string, mid: string) {
+  return JSON.stringify({ pid, mid });
+}
+
+function fromModelOptionValue(value: string): { pid: string; mid: string } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed.pid === 'string' && typeof parsed.mid === 'string') {
+      return parsed;
+    }
+  } catch {}
+  return null;
+}
+
 const MIN_W = 380, MIN_H = 420, DEFAULT_W = 480, DEFAULT_H = 620;
 
 export default function AIAssistant() {
@@ -23,6 +43,7 @@ export default function AIAssistant() {
   const [providers, setProviders] = useState<Record<string, any>>({});
   const [primaryModel, setPrimaryModel] = useState('');
   const [isMaximized, setIsMaximized] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -47,7 +68,7 @@ export default function AIAssistant() {
       setPrimaryModel(nextPrimary);
 
       if (providerId && modelId) {
-        const models = nextProviders?.[providerId]?.models || [];
+        const models = normalizeProviderModels(nextProviders?.[providerId]?.models);
         const exists = models.some((m: any) => (typeof m === 'string' ? m : m?.id) === modelId);
         if (!exists) {
           setProviderId('');
@@ -59,12 +80,30 @@ export default function AIAssistant() {
     return null;
   }, [providerId, modelId]);
 
+  useEffect(() => {
+    const syncViewport = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    return () => window.removeEventListener('resize', syncViewport);
+  }, []);
+
   // Initialize position to bottom-right
   useEffect(() => {
     if (open && pos.x === -1) {
       setPos({ x: window.innerWidth - size.w - 24, y: window.innerHeight - size.h - 24 });
     }
-  }, [open]);
+  }, [open, pos.x, size.w]);
+
+  useEffect(() => {
+    if (!open || !isMobile) return;
+    const width = Math.max(window.innerWidth - 16, 320);
+    const height = Math.max(window.innerHeight - 16, 480);
+    setPos({ x: 8, y: 8 });
+    setSize({ w: width, h: height });
+    setIsMaximized(false);
+  }, [open, isMobile]);
 
   // Load model config
   useEffect(() => {
@@ -101,6 +140,7 @@ export default function AIAssistant() {
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
+      if (isMobile) return;
       if (dragging.current) {
         const nx = Math.max(0, Math.min(window.innerWidth - size.w, e.clientX - dragOffset.current.x));
         const ny = Math.max(0, Math.min(window.innerHeight - size.h, e.clientY - dragOffset.current.y));
@@ -119,7 +159,7 @@ export default function AIAssistant() {
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  }, [size]);
+  }, [size, isMobile]);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -135,7 +175,7 @@ export default function AIAssistant() {
       const latest = await loadModelConfig();
 
       if (latest && effectiveProviderId && effectiveModelId) {
-        const models = latest.providers?.[effectiveProviderId]?.models || [];
+        const models = normalizeProviderModels(latest.providers?.[effectiveProviderId]?.models);
         const exists = models.some((m: any) => (typeof m === 'string' ? m : m?.id) === effectiveModelId);
         if (!exists) {
           effectiveProviderId = '';
@@ -164,8 +204,9 @@ export default function AIAssistant() {
   // All available models for dropdown
   const allModels: { pid: string; mid: string; label: string }[] = [];
   for (const [pid, prov] of Object.entries(providers) as [string, any][]) {
-    for (const m of (prov.models || [])) {
+    for (const m of normalizeProviderModels(prov?.models)) {
       const mid = typeof m === 'string' ? m : m.id;
+      if (!mid || typeof mid !== 'string') continue;
       allModels.push({ pid, mid, label: `${pid}/${mid}` });
     }
   }
@@ -177,24 +218,24 @@ export default function AIAssistant() {
       {/* Floating bubble */}
       {!open && (
         <button onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-lg shadow-violet-300/40 dark:shadow-violet-900/40 hover:shadow-xl hover:shadow-violet-300/50 dark:hover:shadow-violet-900/50 hover:scale-110 transition-all duration-300 flex items-center justify-center group"
+          className={`fixed z-50 flex items-center justify-center rounded-full border border-blue-200/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.24),rgba(255,255,255,0.08)),linear-gradient(135deg,rgba(37,99,235,0.96),rgba(14,165,233,0.86))] text-white shadow-[0_18px_40px_rgba(37,99,235,0.34)] backdrop-blur-2xl transition-all duration-300 hover:scale-110 hover:shadow-[0_22px_48px_rgba(37,99,235,0.42)] dark:border-blue-400/20 dark:bg-[linear-gradient(145deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02)),linear-gradient(135deg,rgba(29,78,216,0.88),rgba(8,145,178,0.74))] dark:shadow-[0_22px_52px_rgba(2,6,23,0.55)] group ${isMobile ? 'bottom-24 right-4 h-12 w-12' : 'bottom-6 right-6 h-14 w-14'}`}
           title="AI 助手">
-          <Bot size={24} className="group-hover:scale-110 transition-transform" />
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-white dark:border-gray-900 animate-pulse" />
+          <Bot size={isMobile ? 20 : 24} className="group-hover:scale-110 transition-transform" />
+          <span className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-400 animate-pulse dark:border-slate-950" />
         </button>
       )}
 
       {/* Chat panel — draggable & resizable */}
       {open && (
         <div ref={panelRef}
-          className="fixed z-50 bg-white dark:bg-gray-900 rounded-2xl shadow-2xl shadow-gray-300/50 dark:shadow-black/50 border border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden"
-          style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}>
+          className="ui-modern-panel fixed z-50 flex flex-col overflow-hidden rounded-[28px] border border-blue-100/70 shadow-[0_28px_70px_rgba(15,23,42,0.18)] before:pointer-events-none before:absolute before:inset-0 before:bg-[linear-gradient(180deg,rgba(255,255,255,0.26),transparent_24%)] before:content-[''] dark:border-blue-400/15 dark:shadow-[0_34px_80px_rgba(2,6,23,0.55)]"
+          style={isMobile ? { left: 8, top: 8, width: 'calc(100vw - 16px)', height: 'calc(100dvh - 16px)', borderRadius: 24 } : { left: pos.x, top: pos.y, width: size.w, height: size.h }}>
 
           {/* Header — drag handle */}
-          <div className="px-4 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 text-white flex items-center justify-between shrink-0 cursor-move select-none"
+          <div className={`relative flex shrink-0 select-none items-center justify-between border-b border-blue-100/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.12),rgba(255,255,255,0.04)),linear-gradient(135deg,rgba(37,99,235,0.94),rgba(14,165,233,0.82))] px-4 py-3 text-white dark:border-blue-400/15 dark:bg-[linear-gradient(145deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01)),linear-gradient(135deg,rgba(15,23,42,0.92),rgba(30,64,175,0.72))] ${isMobile ? '' : 'cursor-move'}`}
             onMouseDown={onDragStart}>
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/20 bg-white/15 backdrop-blur-xl">
                 <Bot size={18} />
               </div>
               <div>
@@ -203,13 +244,13 @@ export default function AIAssistant() {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={() => setShowSettings(!showSettings)} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors" title="设置">
+              <button onClick={() => setShowSettings(!showSettings)} className="rounded-xl border border-white/10 bg-white/10 p-1.5 transition-colors hover:bg-white/20" title="设置">
                 <Settings size={14} />
               </button>
-              <button onClick={() => setMessages([])} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors" title="清空对话">
+              <button onClick={() => setMessages([])} className="rounded-xl border border-white/10 bg-white/10 p-1.5 transition-colors hover:bg-white/20" title="清空对话">
                 <Trash2 size={14} />
               </button>
-              <button onClick={() => {
+              {!isMobile && <button onClick={() => {
                 if (isMaximized) {
                   setPos({ x: savedPosSize.current.x, y: savedPosSize.current.y });
                   setSize({ w: savedPosSize.current.w, h: savedPosSize.current.h });
@@ -222,10 +263,10 @@ export default function AIAssistant() {
                   setPos({ x: (window.innerWidth - maxW) / 2, y: (window.innerHeight - maxH) / 2 });
                   setIsMaximized(true);
                 }
-              }} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors" title={isMaximized ? '还原大小' : '最大化'}>
+              }} className="rounded-xl border border-white/10 bg-white/10 p-1.5 transition-colors hover:bg-white/20" title={isMaximized ? '还原大小' : '最大化'}>
                 {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-              <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors" title="收起">
+              </button>}
+              <button onClick={() => setOpen(false)} className="rounded-xl border border-white/10 bg-white/10 p-1.5 transition-colors hover:bg-white/20" title="收起">
                 <ChevronDown size={14} />
               </button>
             </div>
@@ -233,20 +274,19 @@ export default function AIAssistant() {
 
           {/* Settings panel */}
           {showSettings && (
-            <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800 space-y-2 shrink-0">
+            <div className="shrink-0 space-y-2 border-b border-blue-100/70 bg-white/45 px-4 py-3 backdrop-blur-2xl dark:border-blue-400/15 dark:bg-slate-950/30">
               <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">模型选择</label>
               <div className="relative">
-                <select value={providerId && modelId ? `${providerId}/${modelId}` : ''}
+                <select value={providerId && modelId ? toModelOptionValue(providerId, modelId) : ''}
                   onChange={e => {
-                    const val = e.target.value;
-                    if (!val) { setProviderId(''); setModelId(''); return; }
-                    const parts = val.split('/');
-                    setProviderId(parts[0]);
-                    setModelId(parts.slice(1).join('/'));
+                    const next = fromModelOptionValue(e.target.value);
+                    if (!next) { setProviderId(''); setModelId(''); return; }
+                    setProviderId(next.pid);
+                    setModelId(next.mid);
                   }}
-                  className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 appearance-none cursor-pointer">
+                  className="page-modern-control w-full cursor-pointer appearance-none px-3 py-2 text-xs">
                   <option value="">使用主模型 ({primaryModel || '未配置'})</option>
-                  {allModels.map(m => <option key={m.label} value={m.label}>{m.label}</option>)}
+                  {allModels.map(m => <option key={`${m.pid}:${m.mid}`} value={toModelOptionValue(m.pid, m.mid)}>{m.label}</option>)}
                 </select>
                 <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               </div>
@@ -255,11 +295,11 @@ export default function AIAssistant() {
           )}
 
           {/* Messages */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth min-h-0">
+          <div ref={scrollRef} className="ui-modern-scrollbar flex-1 min-h-0 space-y-4 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.08),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.18),transparent_42%)] p-4 scroll-smooth dark:bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.03),transparent_36%)]">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
-                <div className="w-16 h-16 rounded-full bg-violet-50 dark:bg-violet-900/20 flex items-center justify-center">
-                  <Bot size={28} className="text-violet-400" />
+                <div className="flex h-16 w-16 items-center justify-center rounded-full border border-blue-100/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.88),rgba(219,234,254,0.76))] text-blue-500 shadow-[0_14px_30px_rgba(59,130,246,0.16)] dark:border-blue-400/15 dark:bg-[linear-gradient(135deg,rgba(14,28,48,0.76),rgba(18,39,66,0.58))] dark:text-blue-200">
+                  <Bot size={28} className="text-current" />
                 </div>
                 <div className="text-center">
                   <p className="text-sm font-medium text-gray-500 dark:text-gray-400">你好！我是 ClawPanel AI 助手</p>
@@ -268,7 +308,7 @@ export default function AIAssistant() {
                 <div className="flex flex-wrap gap-1.5 justify-center mt-2">
                   {['如何配置模型？', '技能怎么启用？', '怎么添加QQ通道？', '你使用的是什么模型？'].map(q => (
                     <button key={q} onClick={() => { setInput(q); }}
-                      className="px-2.5 py-1.5 text-[10px] rounded-lg bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors border border-violet-100 dark:border-violet-800/30">
+                      className="page-modern-action px-2.5 py-1.5 text-[10px]">
                       {q}
                     </button>
                   ))}
@@ -278,15 +318,15 @@ export default function AIAssistant() {
 
             {messages.map((msg, i) => (
               <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${msg.role === 'user' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>
+                <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${msg.role === 'user' ? 'border-blue-200/80 bg-[linear-gradient(135deg,rgba(59,130,246,0.18),rgba(14,165,233,0.14))] text-blue-600 dark:border-blue-400/20 dark:bg-[linear-gradient(135deg,rgba(30,64,175,0.42),rgba(14,116,144,0.28))] dark:text-blue-200' : 'border-slate-200/80 bg-white/75 text-slate-500 dark:border-blue-400/15 dark:bg-slate-900/50 dark:text-slate-300'}`}>
                   {msg.role === 'user' ? <MessageCircle size={14} /> : <Bot size={14} />}
                 </div>
                 {msg.role === 'user' ? (
-                  <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-tr-sm bg-violet-600 text-white text-sm leading-relaxed whitespace-pre-wrap break-words">
+                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm border border-blue-300/20 bg-[linear-gradient(135deg,rgba(37,99,235,0.96),rgba(14,165,233,0.82))] px-3.5 py-2.5 text-sm leading-relaxed text-white shadow-[0_14px_30px_rgba(37,99,235,0.22)] dark:border-blue-300/10 dark:shadow-[0_16px_36px_rgba(2,6,23,0.34)]">
                     {msg.content}
                   </div>
                 ) : (
-                  <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-tl-sm bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-100 dark:border-gray-700 ai-markdown">
+                  <div className="ui-modern-card ai-markdown max-w-[85%] rounded-2xl rounded-tl-sm border border-blue-100/70 px-3.5 py-2.5 text-gray-700 dark:border-blue-400/15 dark:text-gray-200">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}
                       components={{
                         p: ({ children }) => <p className="text-sm leading-relaxed mb-2 last:mb-0">{children}</p>,
@@ -299,20 +339,20 @@ export default function AIAssistant() {
                         code: ({ className, children, ...props }) => {
                           const isBlock = className?.includes('language-');
                           return isBlock ? (
-                            <pre className="bg-gray-900 dark:bg-black text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono leading-relaxed"><code>{children}</code></pre>
+                            <pre className="my-2 overflow-x-auto rounded-xl border border-slate-800/70 bg-slate-950/95 p-3 text-xs leading-relaxed text-gray-100 shadow-inner"><code>{children}</code></pre>
                           ) : (
-                            <code className="bg-gray-200 dark:bg-gray-700 text-violet-600 dark:text-violet-300 px-1.5 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>
+                            <code className="rounded-md bg-blue-50 px-1.5 py-0.5 text-xs font-mono text-blue-700 dark:bg-slate-800 dark:text-blue-200" {...props}>{children}</code>
                           );
                         },
                         pre: ({ children }) => <>{children}</>,
-                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-600 dark:text-violet-400 underline hover:text-violet-700">{children}</a>,
-                        blockquote: ({ children }) => <blockquote className="border-l-3 border-violet-300 dark:border-violet-700 pl-3 my-2 text-sm text-gray-500 dark:text-gray-400 italic">{children}</blockquote>,
+                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-700 dark:text-blue-300">{children}</a>,
+                        blockquote: ({ children }) => <blockquote className="my-2 border-l-[3px] border-blue-300 pl-3 text-sm italic text-gray-500 dark:border-blue-600 dark:text-gray-400">{children}</blockquote>,
                         table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full">{children}</table></div>,
-                        th: ({ children }) => <th className="border border-gray-200 dark:border-gray-700 px-2 py-1 bg-gray-50 dark:bg-gray-800 font-semibold text-left">{children}</th>,
-                        td: ({ children }) => <td className="border border-gray-200 dark:border-gray-700 px-2 py-1">{children}</td>,
+                        th: ({ children }) => <th className="border border-blue-100 px-2 py-1 text-left font-semibold bg-blue-50/70 dark:border-blue-400/15 dark:bg-slate-900/40">{children}</th>,
+                        td: ({ children }) => <td className="border border-blue-100 px-2 py-1 dark:border-blue-400/15">{children}</td>,
                         strong: ({ children }) => <strong className="font-bold">{children}</strong>,
                         em: ({ children }) => <em className="italic">{children}</em>,
-                        hr: () => <hr className="border-gray-200 dark:border-gray-700 my-3" />,
+                        hr: () => <hr className="my-3 border-blue-100 dark:border-blue-400/15" />,
                       }}>
                       {msg.content}
                     </ReactMarkdown>
@@ -323,12 +363,12 @@ export default function AIAssistant() {
 
             {loading && (
               <div className="flex gap-2.5">
-                <div className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0 text-gray-500">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200/80 bg-white/75 text-slate-500 dark:border-blue-400/15 dark:bg-slate-900/50 dark:text-slate-300">
                   <Bot size={14} />
                 </div>
-                <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl rounded-tl-sm px-3.5 py-2.5 border border-gray-100 dark:border-gray-700">
+                <div className="ui-modern-card rounded-2xl rounded-tl-sm border border-blue-100/70 px-3.5 py-2.5 dark:border-blue-400/15">
                   <div className="flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin text-violet-500" />
+                    <Loader2 size={14} className="animate-spin text-blue-500" />
                     <span className="text-sm text-gray-400">思考中...</span>
                   </div>
                 </div>
@@ -337,26 +377,26 @@ export default function AIAssistant() {
           </div>
 
           {/* Input */}
-          <div className="px-3 py-3 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30 shrink-0">
+          <div className="shrink-0 border-t border-blue-100/70 bg-white/55 px-3 py-3 backdrop-blur-2xl dark:border-blue-400/15 dark:bg-slate-950/34">
             <div className="flex items-end gap-2">
               <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
                 placeholder="输入问题... (Enter 发送, Shift+Enter 换行)"
                 rows={1}
-                className="flex-1 px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all resize-none max-h-24 leading-relaxed"
+                className="page-modern-control max-h-24 flex-1 resize-none px-3.5 py-2.5 text-sm leading-relaxed"
                 style={{ minHeight: '40px' }} />
               <button onClick={sendMessage} disabled={!input.trim() || loading}
-                className="p-2.5 rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md shrink-0">
+                className="page-modern-accent shrink-0 rounded-xl p-2.5 disabled:cursor-not-allowed disabled:opacity-40">
                 {loading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
               </button>
             </div>
           </div>
 
           {/* Resize handle — bottom-right corner */}
-          <div className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize z-10 group" onMouseDown={onResizeStart}>
-            <svg viewBox="0 0 16 16" className="w-full h-full text-gray-300 dark:text-gray-600 group-hover:text-violet-400 transition-colors">
+          {!isMobile && <div className="absolute bottom-0 right-0 z-10 h-4 w-4 cursor-se-resize group" onMouseDown={onResizeStart}>
+            <svg viewBox="0 0 16 16" className="h-full w-full text-slate-300 transition-colors group-hover:text-blue-400 dark:text-slate-600 dark:group-hover:text-blue-300">
               <path d="M14 14L14 8M14 14L8 14M10 14L14 10" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
             </svg>
-          </div>
+          </div>}
         </div>
       )}
     </>
