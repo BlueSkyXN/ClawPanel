@@ -757,17 +757,34 @@ func SystemDiagnose(cfg *config.Config) gin.HandlerFunc {
 
 		// OpenClaw specific
 		lines = append(lines, "--- OpenClaw ---")
-		ocVer := detectCmd("openclaw", "--version")
+		ocVer := detectOpenClawVersion(cfg)
+		ocBin := config.DetectOpenClawBinaryPath()
 		if ocVer != "" {
-			lines = append(lines, "版本: "+ocVer)
-		} else {
-			lines = append(lines, "版本: 未检测到 (openclaw 不在 PATH 中)")
-		}
-		// Which openclaw
-		if runtime.GOOS != "windows" {
-			if wp := runDiagCmd("which", "openclaw"); wp != "" {
-				lines = append(lines, "路径: "+wp)
+			if ocVer == "installed" {
+				lines = append(lines, "版本: 已安装（未能解析具体版本）")
+			} else {
+				lines = append(lines, "版本: "+ocVer)
 			}
+		} else {
+			lines = append(lines, "版本: 未检测到")
+		}
+		// Binary path diagnostics
+		if ocBin != "" {
+			lines = append(lines, "路径: "+ocBin)
+		}
+		rawPath := ""
+		if runtime.GOOS == "windows" {
+			rawPath = runDiagCmdRaw("where", "openclaw")
+			if idx := strings.Index(rawPath, "\n"); idx > 0 {
+				rawPath = strings.TrimSpace(rawPath[:idx])
+			}
+		} else {
+			rawPath = runDiagCmdRaw("which", "openclaw")
+		}
+		if rawPath != "" {
+			lines = append(lines, "PATH 命中: "+rawPath)
+		} else if ocBin != "" {
+			lines = append(lines, "PATH 命中: ❌ openclaw 不在当前 PATH（已通过固定路径探测）")
 		}
 		// npm global root
 		if nr := runDiagCmd("npm", "root", "-g"); nr != "" {
@@ -1009,6 +1026,16 @@ func diagnoseChannelTSStartAccount(cfg *config.Config, repair bool) []DiagnoseSt
 }
 
 func runDiagCmd(name string, args ...string) string {
+	cmd := exec.Command(name, args...)
+	cmd.Env = config.BuildExecEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func runDiagCmdRaw(name string, args ...string) string {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.Output()
 	if err != nil {

@@ -72,3 +72,61 @@ func TestSaveOpenClawConfigPreservesCriticalFields(t *testing.T) {
 		t.Fatalf("cron.jobs should be preserved")
 	}
 }
+
+func TestPatchModelsJSONForAgentUsesConfiguredAgentDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSONRaw := func(path string, data map[string]interface{}) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		raw, err := json.Marshal(data)
+		if err != nil {
+			t.Fatalf("marshal json: %v", err)
+		}
+		if err := os.WriteFile(path, raw, 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	writeJSONRaw(filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"list": []interface{}{
+				map[string]interface{}{"id": "work", "agentDir": "custom/work-agent"},
+			},
+		},
+	})
+	modelsPath := filepath.Join(dir, "custom", "work-agent", "agent", "models.json")
+	writeJSONRaw(modelsPath, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"deepseek": map[string]interface{}{
+				"baseUrl": "https://api.deepseek.com/v1",
+				"models": []interface{}{
+					map[string]interface{}{"id": "deepseek-chat", "compat": map[string]interface{}{"supportsDeveloperRole": true}},
+				},
+			},
+		},
+	})
+
+	patchModelsJSONForAgent(cfg, "work")
+
+	raw, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatalf("read models.json: %v", err)
+	}
+	var saved map[string]interface{}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("decode models.json: %v", err)
+	}
+	providers, _ := saved["providers"].(map[string]interface{})
+	provider, _ := providers["deepseek"].(map[string]interface{})
+	models, _ := provider["models"].([]interface{})
+	model, _ := models[0].(map[string]interface{})
+	compat, _ := model["compat"].(map[string]interface{})
+	if got, _ := compat["supportsDeveloperRole"].(bool); got {
+		t.Fatalf("expected compat.supportsDeveloperRole to be forced false")
+	}
+}

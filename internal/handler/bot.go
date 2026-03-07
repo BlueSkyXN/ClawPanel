@@ -185,6 +185,7 @@ func RejectRequest(cfg *config.Config) gin.HandlerFunc {
 const NAPCAT_WEBUI = "http://127.0.0.1:6099"
 
 var napcatCredential string
+var napcatCredentialToken string
 
 func napcatProxy(method, path string, body interface{}, credential string) (map[string]interface{}, error) {
 	var bodyReader io.Reader
@@ -214,18 +215,72 @@ func napcatProxy(method, path string, body interface{}, credential string) (map[
 	return result, nil
 }
 
-// readNapCatWebuiToken reads the actual token from NapCat's webui.json (Docker or Windows Shell).
+// readNapCatWebuiToken reads the actual token NapCat is using.
+// NapCat 4.x generates a random token on each startup and logs it as:
+//
+//	[WebUi] WebUi Token: <token>
+//
+// So we parse the latest log file to get the live token.
 func readNapCatWebuiToken(cfg *config.Config) string {
 	if runtime.GOOS == "windows" {
 		napcatDir := getNapCatShellDir(cfg)
-		if napcatDir != "" {
-			data, err := os.ReadFile(filepath.Join(napcatDir, "config", "webui.json"))
-			if err == nil {
-				var webui map[string]interface{}
-				if json.Unmarshal(data, &webui) == nil {
-					if t, ok := webui["token"].(string); ok && t != "" {
-						return t
+		if napcatDir == "" {
+			return ""
+		}
+		// Walk up from bootmain dir to find the napcat logs directory
+		// Structure: <install>/versions/<ver>/resources/app/napcat/logs
+		logsDir := ""
+		filepath.WalkDir(napcatDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || logsDir != "" {
+				return nil
+			}
+			if d.IsDir() && strings.EqualFold(d.Name(), "logs") {
+				// Verify it looks like a napcat logs dir (has .log files)
+				entries, _ := os.ReadDir(path)
+				for _, e := range entries {
+					if strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+						logsDir = path
+						return filepath.SkipAll
 					}
+				}
+			}
+			return nil
+		})
+		// Also check parent dirs up 6 levels from napcatDir
+		if logsDir == "" {
+			dir := napcatDir
+			for i := 0; i < 8; i++ {
+				candidate := filepath.Join(dir, "logs")
+				if entries, err := os.ReadDir(candidate); err == nil {
+					for _, e := range entries {
+						if strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+							logsDir = candidate
+							break
+						}
+					}
+				}
+				if logsDir != "" {
+					break
+				}
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+			}
+		}
+		if logsDir != "" {
+			if tok := tokenFromNapCatLogs(logsDir); tok != "" {
+				return tok
+			}
+		}
+		// Fallback: try webui.json in bootmain config
+		data, err := os.ReadFile(filepath.Join(napcatDir, "config", "webui.json"))
+		if err == nil {
+			var webui map[string]interface{}
+			if json.Unmarshal(data, &webui) == nil {
+				if t, ok := webui["token"].(string); ok && t != "" {
+					return t
 				}
 			}
 		}
@@ -237,6 +292,40 @@ func readNapCatWebuiToken(cfg *config.Config) string {
 				if t, ok := webui["token"].(string); ok && t != "" {
 					return t
 				}
+			}
+		}
+	}
+	return ""
+}
+
+// tokenFromNapCatLogs finds the most recent NapCat log file and extracts the WebUI token.
+func tokenFromNapCatLogs(logsDir string) string {
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		return ""
+	}
+	// Find the newest .log file
+	var newest os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".log") {
+			if newest == nil || e.Name() > newest.Name() {
+				newest = e
+			}
+		}
+	}
+	if newest == nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(logsDir, newest.Name()))
+	if err != nil {
+		return ""
+	}
+	// Look for: [WebUi] WebUi Token: <token>
+	for _, line := range strings.Split(string(data), "\n") {
+		if idx := strings.Index(line, "[WebUi] WebUi Token: "); idx >= 0 {
+			tok := strings.TrimSpace(line[idx+len("[WebUi] WebUi Token: "):])
+			if tok != "" {
+				return tok
 			}
 		}
 	}
@@ -262,16 +351,26 @@ func napcatLoginWithToken(token string) string {
 
 func napcatAuth(cfg *config.Config) string {
 	if napcatCredential != "" {
-		return napcatCredential
+		containerToken := readNapCatWebuiToken(cfg)
+		if containerToken == "" || napcatCredentialToken == "" || containerToken == napcatCredentialToken {
+			return napcatCredential
+		}
+		// Token changed after NapCat restart; cached credential is no longer trustworthy.
+		napcatCredential = ""
+		napcatCredentialToken = ""
 	}
 
-	// 1. Try the actual token from NapCat's webui.json (ground truth)
+	// 1. Try the actual token from NapCat's log (NapCat 4.x generates random token each startup)
 	containerToken := readNapCatWebuiToken(cfg)
 	if containerToken != "" {
 		if cred := napcatLoginWithToken(containerToken); cred != "" {
 			napcatCredential = cred
+			napcatCredentialToken = containerToken
 			return napcatCredential
 		}
+		// Token changed (NapCat restarted) — clear stale credential
+		napcatCredential = ""
+		napcatCredentialToken = ""
 	}
 
 	// 2. Fallback: admin-config or default token (may differ from container)
@@ -288,6 +387,7 @@ func napcatAuth(cfg *config.Config) string {
 	if webuiToken != containerToken {
 		if cred := napcatLoginWithToken(webuiToken); cred != "" {
 			napcatCredential = cred
+			napcatCredentialToken = webuiToken
 			return napcatCredential
 		}
 	}
@@ -324,6 +424,7 @@ func napcatApiCall(cfg *config.Config, method, path string, body interface{}) (m
 	// If unauthorized, clear cache and retry with fresh auth
 	if isNapcatUnauthorized(r) {
 		napcatCredential = ""
+		napcatCredentialToken = ""
 		cred = napcatAuth(cfg)
 		if cred != "" {
 			return napcatProxy(method, path, body, cred)
@@ -348,7 +449,7 @@ func NapcatLoginStatus(cfg *config.Config) gin.HandlerFunc {
 
 func NapcatGetQRCode(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Retry up to 5 times (total ~10s) to wait for NapCat to become ready
+		// Retry up to 5 times (~10s) waiting for NapCat to become ready
 		var r map[string]interface{}
 		var err error
 		for i := 0; i < 5; i++ {
@@ -356,25 +457,77 @@ func NapcatGetQRCode(cfg *config.Config) gin.HandlerFunc {
 			if err == nil {
 				break
 			}
-			// NapCat not ready yet, wait and retry
 			time.Sleep(2 * time.Second)
-			napcatCredential = "" // clear stale credential
+			napcatCredential = ""
 		}
+
+		// If API failed, try CheckLoginStatus which also returns qrcodeurl
+		if err != nil || r == nil {
+			if r2, err2 := napcatApiCall(cfg, "POST", "/api/QQLogin/CheckLoginStatus", nil); err2 == nil {
+				if data2, ok := r2["data"].(map[string]interface{}); ok {
+					if u, ok := data2["qrcodeurl"].(string); ok && u != "" {
+						r = map[string]interface{}{"data": map[string]interface{}{"qrcode": u}}
+						err = nil
+					}
+				}
+			}
+		}
+
 		if err != nil {
+			// Last resort: serve the cached qrcode.png NapCat wrote to disk
+			if pngData := readNapCatQRCodePNG(cfg); len(pngData) > 0 {
+				c.JSON(200, gin.H{
+					"ok":   true,
+					"code": 0,
+					"data": gin.H{"qrcode": "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngData)},
+				})
+				return
+			}
 			c.JSON(200, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
+
 		r["ok"] = true
 		// NapCat returns a URL in data.qrcode — convert to base64 QR image
 		if data, ok := r["data"].(map[string]interface{}); ok {
 			if qrURL, ok := data["qrcode"].(string); ok && qrURL != "" && !strings.HasPrefix(qrURL, "data:") {
-				if png, err := qrcode.Encode(qrURL, qrcode.Medium, 256); err == nil {
+				if png, encErr := qrcode.Encode(qrURL, qrcode.Medium, 256); encErr == nil {
 					data["qrcode"] = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 				}
 			}
 		}
 		c.JSON(200, r)
 	}
+}
+
+// readNapCatQRCodePNG reads the qrcode.png that NapCat saves to its cache directory.
+func readNapCatQRCodePNG(cfg *config.Config) []byte {
+	napcatDir := getNapCatShellDir(cfg)
+	if napcatDir == "" {
+		return nil
+	}
+	// Walk to find cache/qrcode.png
+	var pngPath string
+	filepath.WalkDir(napcatDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || pngPath != "" {
+			return nil
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), "qrcode.png") {
+			pngPath = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if pngPath == "" {
+		return nil
+	}
+	// Only use if written within last 3 minutes (QR codes expire)
+	info, err := os.Stat(pngPath)
+	if err != nil || time.Since(info.ModTime()) > 3*time.Minute {
+		return nil
+	}
+	data, _ := os.ReadFile(pngPath)
+	return data
 }
 
 func NapcatRefreshQRCode(cfg *config.Config) gin.HandlerFunc {
@@ -507,21 +660,14 @@ func restartNapCatProcess(cfg *config.Config) {
 		exec.Command("taskkill", "/F", "/IM", "NapCatWinBootMain.exe").Run()
 		exec.Command("taskkill", "/F", "/IM", "napcat.exe").Run()
 		exec.Command("taskkill", "/F", "/IM", "QQ.exe").Run()
-		// Restart: find and launch napcat.bat
+		// Restart: launch NapCatWinBootMain.exe in the interactive user session via schtasks.
+		// ClawPanel runs as SYSTEM (session 0); direct exec cannot create GUI processes in
+		// the user's desktop session (session 1). schtasks runs as the interactive user.
 		napcatDir := getNapCatShellDir(cfg)
 		if napcatDir != "" {
-			batPath := filepath.Join(napcatDir, "napcat.bat")
-			if _, err := os.Stat(batPath); err == nil {
-				cmd := exec.Command("cmd", "/C", "start", "/B", batPath)
-				cmd.Dir = napcatDir
-				cmd.Start()
-				return
-			}
 			exePath := filepath.Join(napcatDir, "NapCatWinBootMain.exe")
 			if _, err := os.Stat(exePath); err == nil {
-				cmd := exec.Command(exePath)
-				cmd.Dir = napcatDir
-				cmd.Start()
+				launchInUserSession(exePath, napcatDir)
 			}
 		}
 	} else {
@@ -611,6 +757,116 @@ func ClawHubSync(cfg *config.Config) gin.HandlerFunc {
 		}
 		c.JSON(200, gin.H{"ok": true, "skills": []interface{}{}, "source": "empty"})
 	}
+}
+
+// launchInUserSession launches an executable in the interactive user session via schtasks.
+// Required because ClawPanel runs as SYSTEM (session 0) and cannot directly spawn GUI
+// processes in the user's desktop session (session 1).
+// getInteractiveUser returns the username of the currently logged-in interactive user.
+// WMIC outputs UTF-16LE; we decode it properly to handle non-ASCII usernames.
+func getInteractiveUser() string {
+	out, err := exec.Command("wmic", "computersystem", "get", "UserName", "/VALUE").Output()
+	if err == nil {
+		text := decodeUTF16LEHandler(out)
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(strings.ToLower(line), "username=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+					return strings.TrimSpace(parts[1])
+				}
+			}
+		}
+	}
+	// Fallback: qwinsta.exe shows active console sessions
+	out2, err := exec.Command(`C:\Windows\System32\qwinsta.exe`).Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out2), "\n") {
+			if strings.Contains(line, "Active") || strings.Contains(line, "活动") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					u := strings.TrimPrefix(fields[0], ">")
+					if strings.HasPrefix(strings.ToLower(u), "console") || strings.HasPrefix(strings.ToLower(u), "rdp") {
+						u = fields[1]
+					}
+					if u != "" && !strings.EqualFold(u, "services") {
+						return u
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// decodeUTF16LEHandler decodes UTF-16LE bytes (WMIC output) to UTF-8 string.
+func decodeUTF16LEHandler(b []byte) string {
+	if len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE {
+		b = b[2:]
+	}
+	if len(b)%2 != 0 {
+		b = b[:len(b)-1]
+	}
+	u16 := make([]uint16, len(b)/2)
+	for i := range u16 {
+		u16[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
+	}
+	var sb strings.Builder
+	for i := 0; i < len(u16); {
+		c := rune(u16[i])
+		i++
+		if c >= 0xD800 && c <= 0xDBFF && i < len(u16) {
+			low := rune(u16[i])
+			if low >= 0xDC00 && low <= 0xDFFF {
+				c = 0x10000 + (c-0xD800)*0x400 + (low - 0xDC00)
+				i++
+			}
+		}
+		sb.WriteRune(c)
+	}
+	return sb.String()
+}
+
+// launchInUserSession launches an executable in the interactive user session.
+// Uses schtasks /RU <interactive_user> so the process runs in the user's desktop
+// session (session 1) even when called from a SYSTEM service (session 0).
+func launchInUserSession(exePath, workDir string) {
+	username := getInteractiveUser()
+	if username != "" {
+		psContent := fmt.Sprintf(
+			"Set-Location '%s'\nStart-Process -FilePath '%s' -WorkingDirectory '%s' -WindowStyle Hidden\n",
+			workDir, exePath, workDir)
+		psFile := filepath.Join(os.TempDir(), "napcat_launch_h.ps1")
+		if err := os.WriteFile(psFile, []byte(psContent), 0644); err == nil {
+			taskName := "ClawPanelStartNapCatH"
+			tr := fmt.Sprintf(
+				"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%s\"",
+				psFile)
+			exec.Command("schtasks", "/Delete", "/TN", taskName, "/F").Run()
+			err := exec.Command("schtasks", "/Create", "/F",
+				"/TN", taskName,
+				"/SC", "ONCE",
+				"/ST", "00:00",
+				"/RU", username,
+				"/TR", tr,
+				"/RL", "HIGHEST",
+			).Run()
+			if err == nil {
+				if err = exec.Command("schtasks", "/Run", "/TN", taskName).Run(); err == nil {
+					go func() {
+						time.Sleep(15 * time.Second)
+						exec.Command("schtasks", "/Delete", "/TN", taskName, "/F").Run()
+						os.Remove(psFile)
+					}()
+					return
+				}
+			}
+		}
+	}
+	// Fallback: direct exec
+	cmd := exec.Command(exePath)
+	cmd.Dir = workDir
+	cmd.Start()
 }
 
 // helper to read openclaw.json

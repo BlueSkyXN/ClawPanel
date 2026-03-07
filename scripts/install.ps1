@@ -27,7 +27,7 @@ try {
     Write-Host "  [ClawPanel] 最新版本: v$VERSION" -ForegroundColor Green
 } catch {
     Write-Host "  [ClawPanel] 无法获取最新版本，使用默认版本..." -ForegroundColor Yellow
-    $VERSION = "5.0.27"
+    $VERSION = "5.0.32"
 }
 
 $BINARY_NAME = "clawpanel-v${VERSION}-windows-amd64.exe"

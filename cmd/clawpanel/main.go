@@ -161,7 +161,6 @@ func runServer(stopCh chan struct{}) {
 	// 启动独立更新服务（进程隔离，独立端口）
 	updaterSrv := updater.NewServer(Version, cfg.DataDir, cfg.OpenClawDir, cfg.Port)
 	updaterSrv.Start()
-	defer updaterSrv.Stop()
 
 	// 设置 Gin 模式
 	if cfg.Debug {
@@ -189,7 +188,7 @@ func runServer(stopCh chan struct{}) {
 			auth.POST("/auth/change-password", handler.ChangePassword(db, cfg))
 
 			// 状态总览
-			auth.GET("/status", handler.GetStatus(db, cfg, procMgr))
+			auth.GET("/status", handler.GetStatus(db, cfg, procMgr, napcatMon))
 
 			// OpenClaw 配置
 			auth.GET("/openclaw/config", handler.GetOpenClawConfig(cfg))
@@ -369,7 +368,7 @@ func runServer(stopCh chan struct{}) {
 		api.GET("/workspace/preview", handler.WorkspacePreview(cfg))
 
 		// 外部日志接口（无需认证）
-		api.POST("/events/log", handler.PostEvent(db))
+		api.POST("/events/log", handler.PostEvent(db, wsHub))
 	}
 
 	// WebSocket 路由（前端连接 /ws?token=...，需通过 JWT 验证）

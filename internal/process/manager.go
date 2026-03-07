@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -140,35 +142,7 @@ func (m *Manager) Start() error {
 }
 
 func buildProcessEnv() []string {
-	home := os.Getenv("HOME")
-	if home == "" {
-		home, _ = os.UserHomeDir()
-	}
-	if home == "" {
-		if runtime.GOOS == "darwin" {
-			home = "/var/root"
-		} else if runtime.GOOS == "windows" {
-			home = os.Getenv("USERPROFILE")
-		} else {
-			home = "/root"
-		}
-	}
-
-	path := os.Getenv("PATH")
-	if runtime.GOOS == "windows" {
-		if path == "" {
-			path = `C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0\`
-		}
-	} else {
-		extra := "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin"
-		if path == "" {
-			path = extra
-		} else {
-			path = path + ":" + extra
-		}
-	}
-
-	return append(os.Environ(), "HOME="+home, "PATH="+path)
+	return config.BuildExecEnv()
 }
 
 // Stop 停止 OpenClaw 进程
@@ -183,28 +157,71 @@ func (m *Manager) Stop() error {
 	if m.daemonized {
 		return fmt.Errorf("OpenClaw 当前以 daemon fork 模式运行，ClawPanel 暂不支持直接停止；请使用网关重启或在外部环境中停止")
 	}
-	if !m.status.Running || m.cmd == nil || m.cmd.Process == nil {
+	if !m.status.Running {
 		return fmt.Errorf("OpenClaw 未在运行")
 	}
 
 	log.Printf("[ProcessMgr] 正在停止 OpenClaw (PID: %d)...", m.status.PID)
 
-	// 先尝试优雅关闭
-	if runtime.GOOS == "windows" {
-		m.cmd.Process.Kill()
-	} else {
-		m.cmd.Process.Signal(os.Interrupt)
-		// 等待 5 秒，如果还没退出则强制杀死
-		done := make(chan struct{})
-		go func() {
-			m.cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			m.cmd.Process.Kill()
+	gatewayPort := m.getGatewayPort()
+
+	// First, ask OpenClaw CLI to stop the daemon gateway process.
+	if bin := m.findOpenClawBin(); bin != "" {
+		cmd := exec.Command(bin, "gateway", "stop")
+		cmd.Dir = m.cfg.OpenClawDir
+		cmd.Env = append(buildProcessEnv(),
+			fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
+			fmt.Sprintf("OPENCLAW_STATE_DIR=%s", m.cfg.OpenClawDir),
+			fmt.Sprintf("OPENCLAW_CONFIG_PATH=%s/openclaw.json", m.cfg.OpenClawDir),
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[ProcessMgr] gateway stop 命令失败: %v (%s)", err, strings.TrimSpace(string(out)))
 		}
+	}
+
+	// Wait briefly for the gateway port to go down.
+	for i := 0; i < 10; i++ {
+		if !m.isPortListening(gatewayPort) {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// On Windows, if daemon still holds the port, force-kill by listening PID.
+	if runtime.GOOS == "windows" && m.isPortListening(gatewayPort) {
+		if killed := m.killWindowsPortListeners(gatewayPort); killed > 0 {
+			log.Printf("[ProcessMgr] 已强制终止 %d 个占用端口 %s 的进程", killed, gatewayPort)
+		}
+		for i := 0; i < 10; i++ {
+			if !m.isPortListening(gatewayPort) {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+
+	// 先尝试优雅关闭
+	if m.cmd != nil && m.cmd.Process != nil {
+		if runtime.GOOS == "windows" {
+			_ = m.cmd.Process.Kill()
+		} else {
+			_ = m.cmd.Process.Signal(os.Interrupt)
+			// 等待 5 秒，如果还没退出则强制杀死
+			done := make(chan struct{})
+			go func() {
+				_ = m.cmd.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = m.cmd.Process.Kill()
+			}
+		}
+	}
+
+	if m.isPortListening(gatewayPort) {
+		return fmt.Errorf("OpenClaw 网关端口 %s 仍被占用，停止失败", gatewayPort)
 	}
 
 	m.status.Running = false
@@ -214,6 +231,42 @@ func (m *Manager) Stop() error {
 	m.lastGatewayProbeOK = false
 	log.Println("[ProcessMgr] OpenClaw 已停止")
 	return nil
+}
+
+func (m *Manager) killWindowsPortListeners(port string) int {
+	cmd := exec.Command("cmd", "/C", "netstat -ano -p tcp")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	pidSet := map[int]struct{}{}
+	needle := ":" + port
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(line, needle) || !strings.Contains(strings.ToUpper(line), "LISTENING") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil || pid <= 0 {
+			continue
+		}
+		pidSet[pid] = struct{}{}
+	}
+	killed := 0
+	for pid := range pidSet {
+		k := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F")
+		if err := k.Run(); err == nil {
+			killed++
+		}
+	}
+	return killed
 }
 
 // Restart 重启 OpenClaw 进程
@@ -735,9 +788,8 @@ func (m *Manager) monitorDaemon() {
 }
 
 // ensureOpenClawConfig 启动前检查并修复 openclaw.json 关键配置
-// 始终确保 gateway.mode=local；仅当 QQ 插件已安装且 NapCat 正在运行时
-// 才写入 channels.qq / plugins.entries.qq / plugins.installs.qq，
-// 避免用户不使用 QQ 插件时被强制写入导致 OpenClaw 网关启动失败。
+// 始终确保 gateway.mode=local；当 QQ 插件已安装时写入
+// channels.qq / plugins.entries.qq / plugins.installs.qq。
 func (m *Manager) ensureOpenClawConfig() {
 	ocDir := m.cfg.OpenClawDir
 	if ocDir == "" {
@@ -778,20 +830,33 @@ func (m *Manager) ensureOpenClawConfig() {
 		changed = true
 	}
 
-	// Only write QQ plugin config if:
-	//   1. The QQ extension directory is installed (extensions/qq exists), AND
-	//   2. NapCat is actually running (Docker container or Windows process)
-	// Without both conditions, injecting channels.qq causes OpenClaw gateway to
-	// fail on startup with "unknown channel id: qq" or similar errors.
+	// Remove keys rejected by some OpenClaw gateway versions.
+	if _, ok := cfg["meta"]; ok {
+		delete(cfg, "meta")
+		changed = true
+	}
+	if _, ok := cfg["workspace"]; ok {
+		delete(cfg, "workspace")
+		changed = true
+	}
+
+	// Write QQ plugin config when QQ extension is installed.
+	//
+	// Root cause fixed here:
+	// - Previously we only injected channels.qq when NapCat was already running.
+	// - If OpenClaw started before NapCat, QQ channel config was skipped and
+	//   incoming QQ messages could not be routed to OpenClaw, resulting in
+	//   "QQ receives message but no reply" symptoms.
+	//
+	// The actual safety condition is "QQ extension installed". Whether NapCat is
+	// currently online should not block channel config injection.
 	qqExtDir := filepath.Join(ocDir, "extensions", "qq")
 	qqInstalled := false
 	if _, err := os.Stat(qqExtDir); err == nil {
 		qqInstalled = true
-		m.normalizeQQPluginOwnership(qqExtDir)
 	}
-	napcatRunning := m.isNapCatRunning()
 
-	if qqInstalled && napcatRunning {
+	if qqInstalled {
 		// Ensure channels.qq with wsUrl
 		ch, _ := cfg["channels"].(map[string]interface{})
 		if ch == nil {
@@ -834,39 +899,26 @@ func (m *Manager) ensureOpenClawConfig() {
 			ins = map[string]interface{}{}
 			pl["installs"] = ins
 		}
-		if ins["qq"] == nil {
-			ins["qq"] = map[string]interface{}{
-				"installPath": qqExtDir,
-				"source":      "archive",
-				"version":     "1.0.0",
-			}
+		qqIns, _ := ins["qq"].(map[string]interface{})
+		if qqIns == nil {
+			qqIns = map[string]interface{}{}
+			ins["qq"] = qqIns
+		}
+		if p, _ := qqIns["installPath"].(string); p == "" {
+			qqIns["installPath"] = qqExtDir
+			changed = true
+		} else if _, err := os.Stat(p); err != nil {
+			qqIns["installPath"] = qqExtDir
 			changed = true
 		}
-	} else if qqInstalled && !napcatRunning {
-		log.Println("[ProcessMgr] QQ 插件已安装但 NapCat 未运行，跳过 channels.qq 配置注入")
-	}
-
-	// Fix invalid channel config values that cause OpenClaw gateway to refuse to start.
-	// e.g. whatsapp.dmPolicy must be one of "pairing"|"allowlist"|"open"|"disabled"
-	ch, _ := cfg["channels"].(map[string]interface{})
-	if ch != nil {
-		if wa, ok := ch["whatsapp"].(map[string]interface{}); ok {
-			validDmPolicy := map[string]bool{"pairing": true, "allowlist": true, "open": true, "disabled": true}
-			if dp, _ := wa["dmPolicy"].(string); dp != "" && !validDmPolicy[dp] {
-				log.Printf("[ProcessMgr] 修复无效 channels.whatsapp.dmPolicy 值 %q → \"disabled\"", dp)
-				wa["dmPolicy"] = "disabled"
-				ch["whatsapp"] = wa
-				cfg["channels"] = ch
-				changed = true
-			}
-			validGroupPolicy := map[string]bool{"pairing": true, "allowlist": true, "open": true, "disabled": true}
-			if gp, _ := wa["groupPolicy"].(string); gp != "" && !validGroupPolicy[gp] {
-				log.Printf("[ProcessMgr] 修复无效 channels.whatsapp.groupPolicy 值 %q → \"disabled\"", gp)
-				wa["groupPolicy"] = "disabled"
-				ch["whatsapp"] = wa
-				cfg["channels"] = ch
-				changed = true
-			}
+		source, _ := qqIns["source"].(string)
+		if source != "npm" && source != "archive" && source != "path" {
+			qqIns["source"] = "path"
+			changed = true
+		}
+		if qqIns["version"] == nil || qqIns["version"] == "" {
+			qqIns["version"] = "latest"
+			changed = true
 		}
 	}
 
@@ -877,28 +929,24 @@ func (m *Manager) ensureOpenClawConfig() {
 		} else if err := os.WriteFile(cfgPath, out, 0644); err != nil {
 			log.Printf("[ProcessMgr] openclaw.json 写入失败: %v", err)
 		} else {
-			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins/whatsapp)")
+			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins)")
 		}
 	}
 
-	// Patch QQ plugin channel.ts: startAccount must return a long-lived Promise
-	m.patchQQPluginChannelTS(ocDir)
-}
-
-// normalizeQQPluginOwnership ensures QQ extension ownership matches the running
-// service user (root in launchd/systemd deployments). Otherwise OpenClaw may
-// block the plugin as suspicious ownership and refuse to load channel "qq".
-func (m *Manager) normalizeQQPluginOwnership(qqExtDir string) {
-	if runtime.GOOS == "windows" {
-		return
+	// Patch QQ plugin channel implementation: startAccount must return
+	// a long-lived Promise (covers both src/channel.ts and dist/channel.js,
+	// and both config-local/extensions and npm-global install paths).
+	qqInstallPath := ""
+	if pl, ok := cfg["plugins"].(map[string]interface{}); ok {
+		if ins, ok := pl["installs"].(map[string]interface{}); ok {
+			if qqIns, ok := ins["qq"].(map[string]interface{}); ok {
+				if p, ok := qqIns["installPath"].(string); ok {
+					qqInstallPath = p
+				}
+			}
+		}
 	}
-	if os.Geteuid() != 0 {
-		return
-	}
-	cmd := exec.Command("chown", "-R", "0:0", qqExtDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("[ProcessMgr] 修复 QQ 插件目录属主失败: %v (%s)", err, strings.TrimSpace(string(out)))
-	}
+	m.patchQQPluginChannel(ocDir, qqInstallPath)
 }
 
 // patchQQPluginChannelTS fixes the critical bug where the QQ plugin's startAccount
@@ -907,70 +955,122 @@ func (m *Manager) normalizeQQPluginOwnership(qqExtDir string) {
 // immediately (non-Promise return), the framework treats the account as exited
 // and triggers auto-restart attempts (up to 10), after which the channel handler
 // dies and incoming messages are never processed.
-func (m *Manager) patchQQPluginChannelTS(ocDir string) {
-	channelTS := filepath.Join(ocDir, "extensions", "qq", "src", "channel.ts")
-	data, err := os.ReadFile(channelTS)
-	if err != nil {
-		return // plugin not installed
+func (m *Manager) patchQQPluginChannel(ocDir, installPath string) {
+	paths := []string{}
+	if ocDir != "" {
+		paths = append(paths,
+			filepath.Join(ocDir, "extensions", "qq", "src", "channel.ts"),
+			filepath.Join(ocDir, "extensions", "qq", "dist", "channel.js"),
+		)
 	}
-	content := string(data)
-
-	// Already patched?
-	if strings.Contains(content, "new Promise") {
-		return
+	if installPath != "" {
+		paths = append(paths,
+			filepath.Join(installPath, "src", "channel.ts"),
+			filepath.Join(installPath, "dist", "channel.js"),
+		)
 	}
-	// Check for the broken pattern
-	if !strings.Contains(content, "return () => {") || !strings.Contains(content, "client.disconnect") {
-		return
+	if m.cfg != nil && m.cfg.OpenClawApp != "" {
+		paths = append(paths,
+			filepath.Join(m.cfg.OpenClawApp, "extensions", "qq", "src", "channel.ts"),
+			filepath.Join(m.cfg.OpenClawApp, "extensions", "qq", "dist", "channel.js"),
+		)
 	}
 
-	oldCode := `      client.connect();
-      
-      return () => {
-        client.disconnect();
-        clients.delete(account.accountId);
-        stopFileServer();
-      };`
-
-	newCode := `      client.connect();
-
-      // Return a Promise that stays pending until abortSignal fires.
-      // OpenClaw gateway expects startAccount to return a long-lived Promise;
-      // if it resolves immediately, the framework treats the account as exited
-      // and triggers auto-restart attempts.
-      const abortSignal = (ctx as any).abortSignal as AbortSignal | undefined;
-      return new Promise<void>((resolve) => {
+	oldPattern := regexp.MustCompile(`(?s)return\s*\(\)\s*=>\s*\{\s*client\.disconnect\(\);\s*clients\.delete\(account\.accountId\);\s*stopFileServer\(\);\s*\};`)
+	newReturn := `return new Promise((resolve) => {
         const cleanup = () => {
           client.disconnect();
           clients.delete(account.accountId);
           stopFileServer();
           resolve();
         };
+        const abortSignal = (ctx && ctx.abortSignal) ? ctx.abortSignal : undefined;
         if (abortSignal) {
           if (abortSignal.aborted) { cleanup(); return; }
           abortSignal.addEventListener("abort", cleanup, { once: true });
         }
-        // Also clean up if the WebSocket closes unexpectedly
         client.on("close", () => {
           cleanup();
         });
       });`
 
-	if !strings.Contains(content, oldCode) {
-		log.Println("[ProcessMgr] channel.ts 需要修复但模式不匹配，跳过自动补丁")
-		return
+	loggerPattern := regexp.MustCompile(`(?s)function\s+postLogEntry\s*\([^)]*\)\s*\{.*?\n\}`)
+	managerURLPattern := regexp.MustCompile(`const\s+MANAGER_LOG_URL\s*=\s*"[^"]*";`)
+	managerPort := 19527
+	if m.cfg != nil && m.cfg.Port > 0 {
+		managerPort = m.cfg.Port
+	}
+	managerURLLine := fmt.Sprintf(`const MANAGER_LOG_URL = "http://127.0.0.1:%d/api/events/log";`, managerPort)
+	loggerReplacement := `function postLogEntry(summary, detail, source) {
+  try {
+    const payload = {
+      source: source || "openclaw",
+      type: "openclaw.reply",
+      summary,
+      detail,
+    };
+    const f = (globalThis && globalThis.fetch) ? globalThis.fetch.bind(globalThis) : null;
+    if (f) {
+      f(MANAGER_LOG_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
+    }
+  } catch {}
+}`
+
+	patchedAny := false
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		patched := content
+		fileChanged := false
+
+		if !strings.Contains(patched, "return new Promise") && oldPattern.MatchString(patched) {
+			patched = oldPattern.ReplaceAllString(patched, newReturn)
+			fileChanged = true
+		}
+
+		if managerURLPattern.MatchString(patched) {
+			next := managerURLPattern.ReplaceAllString(patched, managerURLLine)
+			if next != patched {
+				patched = next
+				fileChanged = true
+			}
+		}
+
+		if strings.Contains(patched, "const http = require(\"http\")") && loggerPattern.MatchString(patched) {
+			patched = loggerPattern.ReplaceAllString(patched, loggerReplacement)
+			fileChanged = true
+		}
+
+		if !fileChanged {
+			continue
+		}
+
+		if err := os.WriteFile(p, []byte(patched), 0644); err != nil {
+			log.Printf("[ProcessMgr] QQ channel 补丁写入失败 (%s): %v", p, err)
+			continue
+		}
+		patchedAny = true
+		log.Printf("[ProcessMgr] ✅ QQ channel 兼容补丁已应用: %s", p)
 	}
 
-	patched := strings.Replace(content, oldCode, newCode, 1)
-	if err := os.WriteFile(channelTS, []byte(patched), 0644); err != nil {
-		log.Printf("[ProcessMgr] channel.ts 补丁写入失败: %v", err)
-		return
+	if !patchedAny {
+		log.Println("[ProcessMgr] QQ channel 兼容补丁未命中（可能已修复或版本结构不同）")
 	}
-	log.Println("[ProcessMgr] ✅ channel.ts startAccount 已自动修复 (返回 long-lived Promise)")
 }
 
 // findOpenClawBin 查找 openclaw 可执行文件
 func (m *Manager) findOpenClawBin() string {
+	if p := config.DetectOpenClawBinaryPath(); p != "" {
+		return p
+	}
+
 	candidates := []string{
 		"openclaw",
 	}

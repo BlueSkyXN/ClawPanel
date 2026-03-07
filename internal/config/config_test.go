@@ -425,11 +425,11 @@ func TestWriteOpenClawJSONNormalizesLegacyPanelFields(t *testing.T) {
 	if messages == nil {
 		t.Fatalf("messages should exist")
 	}
-	if _, ok := messages["systemPrompt"]; ok {
-		t.Fatalf("messages.systemPrompt should be removed")
+	if got, _ := messages["systemPrompt"].(string); got != "legacy" {
+		t.Fatalf("messages.systemPrompt should be preserved, got %q", got)
 	}
-	if _, ok := messages["maxHistoryMessages"]; ok {
-		t.Fatalf("messages.maxHistoryMessages should be removed")
+	if got, ok := messages["maxHistoryMessages"].(float64); !ok || int(got) != 50 {
+		t.Fatalf("messages.maxHistoryMessages should be preserved, got %#v", messages["maxHistoryMessages"])
 	}
 }
 

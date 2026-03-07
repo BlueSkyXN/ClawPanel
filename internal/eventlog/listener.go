@@ -48,6 +48,8 @@ func (l *Listener) Start() {
 		l.mu.Unlock()
 		return
 	}
+	// Recreate stopCh in case Stop() was called before (channel is closed after Stop)
+	l.stopCh = make(chan struct{})
 	l.running = true
 	l.mu.Unlock()
 
@@ -298,6 +300,9 @@ func (l *Listener) parseMessageEvent(msg map[string]interface{}) *model.Event {
 
 func (l *Listener) parseNoticeEvent(msg map[string]interface{}) *model.Event {
 	noticeType, _ := msg["notice_type"].(string)
+	if noticeType == "notify" {
+		return nil
+	}
 	summary := ""
 
 	switch noticeType {
