@@ -89,9 +89,10 @@ jobs:
           path: web/dist/
           retention-days: 3
 
-  # 在 4 个指定系统上原生构建发布二进制，保证产物与目标系统一一对应。
+  # 在稳定可用的 runner 上构建发布二进制。
+  # 其中 darwin/amd64 改为在 Linux runner 上交叉编译，避免 macos-13 runner 不可用导致整条发布链路中断。
   build-binaries:
-    name: Build ${{ matrix.runner }}
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
     needs: [prepare, build-frontend]
     runs-on: ${{ matrix.runner }}
 
@@ -107,7 +108,7 @@ jobs:
             os: linux
             arch: arm64
             ext: ''
-          - runner: macos-13
+          - runner: ubuntu-24.04
             os: darwin
             arch: amd64
             ext: ''
@@ -153,6 +154,10 @@ jobs:
           Copy-Item -Path "web/dist/*" -Destination "cmd/clawpanel/frontend/dist" -Recurse -Force
 
       - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
         run: go build -trimpath -ldflags "-s -w -X main.Version=${{ needs.prepare.outputs.version }}" -o "clawpanel-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" ./cmd/clawpanel/
 
       - name: Upload binary artifact
