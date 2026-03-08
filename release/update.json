@@ -1,20 +1,20 @@
 {
-  "latest_version": "5.2.1",
-  "release_time": "2026-03-08T14:12:00+08:00",
-  "release_note": "## v5.2.1 - Workflow Center 1.0 正式完成\n\n### Workflow Center 1.0\n- 新增完整工作流中心，支持设置、模板管理、AI 生成、运行详情、步骤进度与事件流\n- 支持复杂任务自动接管原会话，支持暂停、继续、重试、审批、取消与多实例并发\n- 节点支持 skill、关键步骤落文件、最终结果回传 QQ 私聊/群聊\n\n### 文件与回传\n- 关键步骤结果自动写入 OpenClaw 工作区 workflows/<channel>/<user>/<shortId>/\n- 工作流详情页新增产出文件区，支持预览、下载、单文件重发、批量重发最终文件\n- 工作流文件预览已对齐工作区弹窗体验，Markdown 支持渲染/源码切换\n\n### 稳定性修复\n- 修复重复创建工作流实例、等待用户回复后无法继续、审批恢复异常等问题\n- 修复 outputFile 被错误生成成 true/false 的异常文件名问题\n- 优化工作流模型上下文裁剪、超时后精简上下文重试与大步骤输出约束，降低中后段 504 超时概率",
+  "latest_version": "5.2.2",
+  "release_time": "2026-03-08T16:50:00+08:00",
+  "release_note": "## v5.2.2 - 安装链路加速与插件配置收口\n\n### 安装链路\n- Linux / macOS / Windows 安装脚本改为优先从加速服务器拉取最新版本信息与安装包，失败后再回退 GitHub Release\n- README 默认安装命令改为加速服务器脚本地址，降低国内安装失败率\n\n### 插件与通道\n- 飞书拆分为官方版与社区版两个独立通道入口\n- 插件安装优先走 OpenClaw 官方命令，失败后回退兼容安装方式，并写入消息中心\n- 插件卸载支持选择“仅卸载插件”或“卸载并清理通道配置”\n- 通道页开始基于 configSchema 自动补充未手写的基础字段\n\n### 稳定性\n- 插件卸载后按插件类型清理对应通道残留配置，飞书双版本保留互斥保护\n- 飞书双通道启用/禁用显式映射到底层 channels.feishu 与正确插件 entry，避免状态错乱",
   "download_urls": {
-    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.1-linux-amd64",
-    "linux_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.1-linux-arm64",
-    "darwin_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.1-darwin-amd64",
-    "darwin_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.1-darwin-arm64",
-    "windows_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.1-windows-amd64.exe"
+    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.2-linux-amd64",
+    "linux_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.2-linux-arm64",
+    "darwin_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.2-darwin-amd64",
+    "darwin_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.2-darwin-arm64",
+    "windows_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.2-windows-amd64.exe"
   },
   "sha256": {
-    "linux_amd64": "50b37f0c2d5c2487dd98bdad35656886386c5fc2121f2b01c6204e376d288dcc",
-    "linux_arm64": "4c00019f3cc7f40def04e707d95463c023e60611d53cf5699f1b04f3189be964",
-    "darwin_amd64": "3572706d61f4cd4cf9895f8a702b01b21385e26b97d4290aa75ece7088664c65",
-    "darwin_arm64": "fac3e2b0f1ce72b48dcc6f1a43cac66d366321094989b9597bc7f4c603a0308a",
-    "windows_amd64": "d7b1707a1dfcf68c789c30c7aefcc61f1cf134532ff19879812f9d333a467183"
+    "linux_amd64": "598c1667e313ad681e08de89c99571fd7affaa9f9af06d350a1f5d646e38fa60",
+    "linux_arm64": "6de5838fa05090b27c1a53721d08a3fcff430b78ba55aed0b02b87491605fc26",
+    "darwin_amd64": "a5342c67ec9d444b04403b8237729983e2d85710a270ecb7a8063c72259096eb",
+    "darwin_arm64": "91a27813934470b5dc23b0f069b4c42ae143cd72d7017ace77a102ca15a8710d",
+    "windows_amd64": "29e7b4b00ce9b410da9c17c5757a9aaaff8d43c80b7db49e40bb3212c13845fb"
   },
   "major_change": false,
   "change_warning": ""

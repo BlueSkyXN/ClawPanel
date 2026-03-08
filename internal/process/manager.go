@@ -840,23 +840,14 @@ func (m *Manager) ensureOpenClawConfig() {
 		changed = true
 	}
 
-	// Write QQ plugin config when QQ extension is installed.
-	//
-	// Root cause fixed here:
-	// - Previously we only injected channels.qq when NapCat was already running.
-	// - If OpenClaw started before NapCat, QQ channel config was skipped and
-	//   incoming QQ messages could not be routed to OpenClaw, resulting in
-	//   "QQ receives message but no reply" symptoms.
-	//
-	// The actual safety condition is "QQ extension installed". Whether NapCat is
-	// currently online should not block channel config injection.
 	qqExtDir := filepath.Join(ocDir, "extensions", "qq")
-	qqInstalled := false
+	qqExtInstalled := false
 	if _, err := os.Stat(qqExtDir); err == nil {
-		qqInstalled = true
+		qqExtInstalled = true
 	}
+	qqShouldManage, qqManagedByNapCat := m.shouldManageQQIntegration(cfg, qqExtDir)
 
-	if qqInstalled {
+	if qqExtInstalled && qqShouldManage {
 		// Ensure channels.qq with wsUrl
 		ch, _ := cfg["channels"].(map[string]interface{})
 		if ch == nil {
@@ -872,7 +863,7 @@ func (m *Manager) ensureOpenClawConfig() {
 			qq["wsUrl"] = "ws://127.0.0.1:3001"
 			changed = true
 		}
-		if qq["enabled"] == nil {
+		if qqManagedByNapCat && qq["enabled"] == nil {
 			qq["enabled"] = true
 			changed = true
 		}
@@ -889,8 +880,15 @@ func (m *Manager) ensureOpenClawConfig() {
 			pl["entries"] = ent
 		}
 		if ent["qq"] == nil {
-			ent["qq"] = map[string]interface{}{"enabled": true}
+			ent["qq"] = map[string]interface{}{"enabled": qqManagedByNapCat}
 			changed = true
+		} else if entry, ok := ent["qq"].(map[string]interface{}); ok && entry != nil {
+			if qqManagedByNapCat {
+				if _, ok := entry["enabled"]; !ok {
+					entry["enabled"] = true
+					changed = true
+				}
+			}
 		}
 
 		// Ensure plugins.installs.qq
@@ -922,6 +920,29 @@ func (m *Manager) ensureOpenClawConfig() {
 		}
 	}
 
+	if !qqShouldManage {
+		if ch, ok := cfg["channels"].(map[string]interface{}); ok && ch != nil {
+			if _, exists := ch["qq"]; exists {
+				delete(ch, "qq")
+				changed = true
+			}
+		}
+		if pl, ok := cfg["plugins"].(map[string]interface{}); ok && pl != nil {
+			if ent, ok := pl["entries"].(map[string]interface{}); ok && ent != nil {
+				if _, exists := ent["qq"]; exists {
+					delete(ent, "qq")
+					changed = true
+				}
+			}
+			if ins, ok := pl["installs"].(map[string]interface{}); ok && ins != nil {
+				if _, exists := ins["qq"]; exists {
+					delete(ins, "qq")
+					changed = true
+				}
+			}
+		}
+	}
+
 	if changed {
 		out, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
@@ -946,9 +967,109 @@ func (m *Manager) ensureOpenClawConfig() {
 			}
 		}
 	}
-	m.patchQQPluginChannel(ocDir, qqInstallPath)
+	if qqShouldManage {
+		m.patchQQPluginChannel(ocDir, qqInstallPath)
+	}
 	m.patchWecomPluginChannel(ocDir)
 	m.patchFeishuPluginChannel(ocDir)
+}
+
+func (m *Manager) shouldManageQQIntegration(ocConfig map[string]interface{}, qqExtDir string) (bool, bool) {
+	pluginInstalled := m.isPanelPluginInstalled("qq")
+	napcatInstalled := m.hasManagedNapCatInstall()
+	if !pluginInstalled && !napcatInstalled && !m.qqChannelSetupMarked() {
+		return false, false
+	}
+	if strings.TrimSpace(qqExtDir) != "" {
+		if _, err := os.Stat(qqExtDir); err != nil {
+			return false, napcatInstalled
+		}
+	}
+	hasExistingQQConfig := false
+	if ocConfig != nil {
+		if channels, ok := ocConfig["channels"].(map[string]interface{}); ok && channels != nil {
+			if _, ok := channels["qq"].(map[string]interface{}); ok {
+				hasExistingQQConfig = true
+			}
+		}
+		if pl, ok := ocConfig["plugins"].(map[string]interface{}); ok && pl != nil {
+			if ent, ok := pl["entries"].(map[string]interface{}); ok && ent != nil {
+				if _, ok := ent["qq"].(map[string]interface{}); ok {
+					hasExistingQQConfig = true
+				}
+			}
+			if ins, ok := pl["installs"].(map[string]interface{}); ok && ins != nil {
+				if _, ok := ins["qq"].(map[string]interface{}); ok {
+					hasExistingQQConfig = true
+				}
+			}
+		}
+	}
+	if !m.qqChannelSetupMarked() && !hasExistingQQConfig {
+		return false, false
+	}
+	return pluginInstalled || napcatInstalled || hasExistingQQConfig, napcatInstalled
+}
+
+func (m *Manager) qqChannelSetupMarked() bool {
+	if m.cfg == nil || strings.TrimSpace(m.cfg.DataDir) == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(m.cfg.DataDir, "qq-channel-enabled.flag"))
+	return err == nil
+}
+
+func (m *Manager) isPanelPluginInstalled(pluginID string) bool {
+	pluginID = strings.TrimSpace(pluginID)
+	if pluginID == "" || m.cfg == nil || strings.TrimSpace(m.cfg.DataDir) == "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(m.cfg.DataDir, "plugins.json"))
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	var state map[string]map[string]interface{}
+	if json.Unmarshal(data, &state) != nil {
+		return false
+	}
+	item, ok := state[pluginID]
+	if !ok || item == nil {
+		return false
+	}
+	if dir, _ := item["dir"].(string); strings.TrimSpace(dir) != "" {
+		if _, err := os.Stat(dir); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) hasManagedNapCatInstall() bool {
+	if m.isNapCatRunning() {
+		return true
+	}
+	if runtime.GOOS == "windows" {
+		home, _ := os.UserHomeDir()
+		candidates := []string{
+			filepath.Join(home, "NapCat"),
+			filepath.Join(home, "Desktop", "NapCat"),
+			`C:\NapCat`,
+			filepath.Join(home, "AppData", "Local", "NapCat"),
+		}
+		for _, dir := range candidates {
+			if strings.TrimSpace(dir) == "" {
+				continue
+			}
+			if _, err := os.Stat(dir); err == nil {
+				return true
+			}
+		}
+		return false
+	}
+	if out, err := runDockerOutput("inspect", "openclaw-qq"); err == nil && len(out) > 0 {
+		return true
+	}
+	return false
 }
 
 // patchQQPluginChannelTS fixes the critical bug where the QQ plugin's startAccount

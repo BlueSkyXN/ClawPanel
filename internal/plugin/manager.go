@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -230,6 +231,10 @@ func resolvePluginInstallStrategy(regPlugin *RegistryPlugin, source string) plug
 
 // Install installs a plugin from registry or URL
 func (m *Manager) Install(pluginID string, source string) error {
+	return m.InstallWithProgress(pluginID, source, nil)
+}
+
+func (m *Manager) InstallWithProgress(pluginID string, source string, logf func(string)) error {
 	// Find plugin in registry
 	reg := m.GetRegistry()
 	var regPlugin *RegistryPlugin
@@ -247,10 +252,18 @@ func (m *Manager) Install(pluginID string, source string) error {
 	strategy := resolvePluginInstallStrategy(regPlugin, source)
 	if strategy.kind == "npm" {
 		npmPkg := strategy.target
-		// Install via npm global
-		if err := m.installFromNpm(npmPkg); err != nil {
-			return fmt.Errorf("npm 安装失败: %v", err)
+		if logf != nil {
+			logf(fmt.Sprintf("📦 优先尝试 OpenClaw 官方命令安装插件: %s", npmPkg))
 		}
+		if err := m.installViaOpenClawCLI(npmPkg, logf); err != nil {
+			if logf != nil {
+				logf(fmt.Sprintf("⚠️ 官方命令安装失败，回退到面板安装逻辑: %v", err))
+			}
+			if err := m.installFromNpm(npmPkg); err != nil {
+				return fmt.Errorf("官方命令安装失败，且 npm 回退安装失败: %v", err)
+			}
+		}
+		m.scanInstalledPlugins()
 		// Find where npm installed it
 		npmRoot := ""
 		if out, err := exec.Command("npm", "root", "-g").Output(); err == nil {
@@ -273,7 +286,11 @@ func (m *Manager) Install(pluginID string, source string) error {
 			meta = &regPlugin.PluginMeta
 		}
 		if installedDir == "" {
-			installedDir = npmPkg
+			if extDir, ok := m.findInstalledPluginDir(pluginID); ok {
+				installedDir = extDir
+			} else {
+				installedDir = npmPkg
+			}
 		}
 		installed := &InstalledPlugin{
 			PluginMeta:  *meta,
@@ -395,6 +412,48 @@ func (m *Manager) Install(pluginID string, source string) error {
 	return nil
 }
 
+func (m *Manager) findInstalledPluginDir(pluginID string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if p, ok := m.plugins[pluginID]; ok && strings.TrimSpace(p.Dir) != "" {
+		return p.Dir, true
+	}
+	return "", false
+}
+
+func (m *Manager) installViaOpenClawCLI(spec string, logf func(string)) error {
+	bin := config.DetectOpenClawBinaryPath()
+	if strings.TrimSpace(bin) == "" {
+		return fmt.Errorf("未找到 openclaw 可执行文件")
+	}
+	cmd := exec.Command(bin, "plugins", "install", spec)
+	cmd.Env = config.BuildExecEnv()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if logf != nil {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				logf(line)
+			}
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, stdout)
+	}
+	if err := cmd.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // InstallLocal installs a plugin from a local directory
 func (m *Manager) InstallLocal(srcDir string) error {
 	meta, err := m.readPluginMeta(srcDir)
@@ -429,7 +488,11 @@ func (m *Manager) InstallLocal(srcDir string) error {
 }
 
 // Uninstall removes a plugin
-func (m *Manager) Uninstall(pluginID string) error {
+func (m *Manager) Uninstall(pluginID string, cleanupConfig bool) error {
+	return m.UninstallWithProgress(pluginID, cleanupConfig, nil)
+}
+
+func (m *Manager) UninstallWithProgress(pluginID string, cleanupConfig bool, logf func(string)) error {
 	m.mu.Lock()
 	p, ok := m.plugins[pluginID]
 	if !ok {
@@ -439,13 +502,55 @@ func (m *Manager) Uninstall(pluginID string) error {
 	delete(m.plugins, pluginID)
 	m.mu.Unlock()
 
+	if logf != nil {
+		logf("📦 开始卸载插件 " + pluginID)
+	}
+	if err := m.uninstallViaOpenClawCLI(pluginID, logf); err != nil {
+		if logf != nil {
+			logf(fmt.Sprintf("⚠️ 官方命令卸载失败，回退到面板卸载逻辑: %v", err))
+		}
+	}
+
 	// Remove plugin directory
 	if p.Dir != "" {
 		os.RemoveAll(p.Dir)
 	}
 
 	m.savePluginsState()
-	if err := m.removeOpenClawPluginState(pluginID); err != nil {
+	if err := m.removeOpenClawPluginState(pluginID, cleanupConfig); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) uninstallViaOpenClawCLI(pluginID string, logf func(string)) error {
+	bin := config.DetectOpenClawBinaryPath()
+	if strings.TrimSpace(bin) == "" {
+		return fmt.Errorf("未找到 openclaw 可执行文件")
+	}
+	cmd := exec.Command(bin, "plugins", "uninstall", pluginID)
+	cmd.Env = config.BuildExecEnv()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if logf != nil {
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				logf(line)
+			}
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, stdout)
+	}
+	if err := cmd.Wait(); err != nil {
 		return err
 	}
 	return nil
@@ -591,7 +696,7 @@ func (m *Manager) Update(pluginID string) error {
 
 	// Otherwise, uninstall and reinstall from registry
 	source := p.Source
-	if err := m.Uninstall(pluginID); err != nil {
+	if err := m.Uninstall(pluginID, true); err != nil {
 		return err
 	}
 	if source == "registry" {
@@ -817,7 +922,7 @@ func normalizeOpenClawInstallSource(source string) string {
 	}
 }
 
-func (m *Manager) removeOpenClawPluginState(pluginID string) error {
+func (m *Manager) removeOpenClawPluginState(pluginID string, cleanupConfig bool) error {
 	ocConfig, err := m.cfg.ReadOpenClawJSON()
 	if err != nil || ocConfig == nil {
 		return err
@@ -832,7 +937,48 @@ func (m *Manager) removeOpenClawPluginState(pluginID string) error {
 	if ins, ok := pl["installs"].(map[string]interface{}); ok {
 		delete(ins, pluginID)
 	}
+	if cleanupConfig {
+		cleanupChannelConfigForPlugin(ocConfig, pluginID)
+	}
 	return m.cfg.WriteOpenClawJSON(ocConfig)
+}
+
+func cleanupChannelConfigForPlugin(ocConfig map[string]interface{}, pluginID string) {
+	if ocConfig == nil {
+		return
+	}
+	channels, _ := ocConfig["channels"].(map[string]interface{})
+	if channels == nil {
+		return
+	}
+	pluginEntries, _ := ocConfig["plugins"].(map[string]interface{})
+	entries, _ := pluginEntries["entries"].(map[string]interface{})
+	installs, _ := pluginEntries["installs"].(map[string]interface{})
+	stillInstalled := func(id string) bool {
+		if entries != nil {
+			if _, ok := entries[id]; ok {
+				return true
+			}
+		}
+		if installs != nil {
+			if _, ok := installs[id]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	switch pluginID {
+	case "feishu-openclaw-plugin":
+		if !stillInstalled("feishu") {
+			delete(channels, "feishu")
+		}
+	case "feishu":
+		if !stillInstalled("feishu-openclaw-plugin") {
+			delete(channels, "feishu")
+		}
+	case "wecom", "wecom-app", "dingtalk", "qqbot", "discord", "mattermost", "line", "matrix", "twitch", "msteams":
+		delete(channels, pluginID)
+	}
 }
 
 func (m *Manager) installFromNpm(pkgName string) error {

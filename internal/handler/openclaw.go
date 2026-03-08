@@ -401,6 +401,19 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "QQ 个人号插件未安装，请先安装 QQ 个人号插件"})
 			return
 		}
+		channelID := req.ChannelID
+		channelConfigKey := req.ChannelID
+		pluginEntryID := req.ChannelID
+		channelLabelKey := req.ChannelID
+		if req.ChannelID == "feishu-official" {
+			channelConfigKey = "feishu"
+			pluginEntryID = "feishu-openclaw-plugin"
+			channelLabelKey = "feishu-official"
+		} else if req.ChannelID == "feishu-community" {
+			channelConfigKey = "feishu"
+			pluginEntryID = "feishu"
+			channelLabelKey = "feishu-community"
+		}
 
 		ocConfig, _ := cfg.ReadOpenClawJSON()
 		if ocConfig == nil {
@@ -412,12 +425,12 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 		if channels == nil {
 			channels = map[string]interface{}{}
 		}
-		ch, _ := channels[req.ChannelID].(map[string]interface{})
+		ch, _ := channels[channelConfigKey].(map[string]interface{})
 		if ch == nil {
 			ch = map[string]interface{}{}
 		}
 		ch["enabled"] = req.Enabled
-		channels[req.ChannelID] = ch
+		channels[channelConfigKey] = ch
 		ocConfig["channels"] = channels
 
 		// 更新 plugins.entries
@@ -431,7 +444,7 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 		}
 
 		// 飞书特殊处理：确定当前活跃的 plugin entry ID，启用/禁用正确的条目
-		if req.ChannelID == "feishu" {
+		if channelID == "feishu" {
 			activeEntryID := resolveActiveFeishuEntryID(entries)
 			pe, _ := entries[activeEntryID].(map[string]interface{})
 			if pe == nil {
@@ -448,13 +461,28 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 				otherEntry["enabled"] = false
 				entries[otherID] = otherEntry
 			}
-		} else {
-			pe, _ := entries[req.ChannelID].(map[string]interface{})
+		} else if channelID == "feishu-official" || channelID == "feishu-community" {
+			pe, _ := entries[pluginEntryID].(map[string]interface{})
 			if pe == nil {
 				pe = map[string]interface{}{}
 			}
 			pe["enabled"] = req.Enabled
-			entries[req.ChannelID] = pe
+			entries[pluginEntryID] = pe
+			otherID := "feishu"
+			if pluginEntryID == "feishu" {
+				otherID = "feishu-openclaw-plugin"
+			}
+			if otherEntry, ok := entries[otherID].(map[string]interface{}); ok {
+				otherEntry["enabled"] = false
+				entries[otherID] = otherEntry
+			}
+		} else {
+			pe, _ := entries[pluginEntryID].(map[string]interface{})
+			if pe == nil {
+				pe = map[string]interface{}{}
+			}
+			pe["enabled"] = req.Enabled
+			entries[pluginEntryID] = pe
 		}
 		plugins["entries"] = entries
 		ocConfig["plugins"] = plugins
@@ -475,15 +503,16 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 		}
 
 		// 发送网关重启信号
-		writeRestartSignal(cfg, req.ChannelID+" toggled")
+		writeRestartSignal(cfg, channelID+" toggled")
 
 		channelNames := map[string]string{
 			"qq": "QQ (NapCat)", "wechat": "微信", "feishu": "飞书",
+			"feishu-official": "飞书（官方版）", "feishu-community": "飞书（社区版）",
 			"qqbot": "QQ Bot", "dingtalk": "钉钉", "wecom": "企业微信",
 		}
-		label := channelNames[req.ChannelID]
+		label := channelNames[channelLabelKey]
 		if label == "" {
-			label = req.ChannelID
+			label = channelLabelKey
 		}
 		action := "已启用"
 		eventType := "channel.enabled"

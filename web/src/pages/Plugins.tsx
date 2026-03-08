@@ -111,8 +111,8 @@ export default function Plugins() {
     try {
       const r = await api.installPlugin(pluginId, source);
       if (r.ok) {
-        showMsg('success', `${pluginId} 安装成功`);
-        loadPlugins();
+        showMsg('success', r.message || `${pluginId} 安装任务已创建，请在消息中心查看进度`);
+        setTimeout(() => { loadPlugins(); }, 5000);
       } else {
         showMsg('error', r.error || '安装失败');
       }
@@ -121,12 +121,14 @@ export default function Plugins() {
   };
 
   const handleUninstall = async (pluginId: string) => {
-    if (!confirm(`确定卸载插件 ${pluginId}？`)) return;
+    const cleanupConfig = window.confirm(`是否在卸载插件 ${pluginId} 时一并清理对应通道配置？\n\n选择“确定” = 卸载并清理配置\n选择“取消” = 仅卸载插件，保留配置`);
+    const confirmed = cleanupConfig || window.confirm(`确认仅卸载插件 ${pluginId} 并保留配置？`);
+    if (!confirmed) return;
     try {
-      const r = await api.uninstallPlugin(pluginId);
+      const r = await api.uninstallPlugin(pluginId, cleanupConfig);
       if (r.ok) {
-        showMsg('success', `${pluginId} 已卸载`);
-        loadPlugins();
+        showMsg('success', r.message || `${pluginId} 卸载任务已创建，请在消息中心查看进度`);
+        setTimeout(() => { loadPlugins(); }, 5000);
       } else {
         showMsg('error', r.error || '卸载失败');
       }

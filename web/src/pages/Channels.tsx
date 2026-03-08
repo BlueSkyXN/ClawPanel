@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import { Radio, Wifi, WifiOff, QrCode, Key, Zap, UserCheck, Check, X, Power, Loader2, RefreshCw, LogOut, Sparkles, Download, Package, Wrench, Search, Copy, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Radio, Wifi, WifiOff, QrCode, Key, Zap, UserCheck, Check, X, Power, Loader2, RefreshCw, LogOut, Sparkles, Download, Package, Wrench, Search, Copy, CheckCircle, AlertTriangle, AlertCircle, Trash2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 type ChannelDef = {
@@ -9,6 +9,27 @@ type ChannelDef = {
   configFields: { key: string; label: string; type: 'text' | 'password' | 'toggle' | 'number' | 'select'; options?: string[]; placeholder?: string; help?: string }[];
   loginMethods?: ('qrcode' | 'quick' | 'password')[];
 };
+
+type ConfigField = ChannelDef['configFields'][number];
+
+const FEISHU_PLUGIN_VARIANTS = {
+  official: { id: 'feishu-openclaw-plugin', label: '飞书官方版', description: '官方维护版本，支持流式卡片、身份授权、话题独立上下文' },
+  clawteam: { id: 'feishu', label: 'ClawTeam 社区版', description: '社区维护版本，兼容当前面板与历史用户配置' },
+} as const;
+
+const FEISHU_SHARED_FIELDS: ChannelDef['configFields'] = [
+  { key: 'appId', label: 'App ID', type: 'text' },
+  { key: 'appSecret', label: 'App Secret', type: 'password' },
+  { key: 'domain', label: '域名', type: 'text', placeholder: 'open.feishu.cn / open.larksuite.com' },
+  { key: 'connectionMode', label: '连接模式', type: 'select', options: ['websocket', 'webhook'] },
+  { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/feishu' },
+  { key: 'verificationToken', label: 'Verification Token', type: 'password' },
+  { key: 'encryptKey', label: 'Encrypt Key', type: 'password' },
+  { key: 'defaultAccount', label: '默认账号', type: 'text' },
+  { key: 'dmPolicy', label: '私聊策略', type: 'select', options: ['pairing', 'open', 'allowlist'] },
+  { key: 'groupPolicy', label: '群聊策略', type: 'select', options: ['open', 'allowlist'] },
+  { key: 'requireMention', label: '群聊需@触发', type: 'toggle' },
+];
 
 const CHANNEL_DEFS: ChannelDef[] = [
   { id: 'qq', label: 'QQ (NapCat)', description: 'QQ个人号，NapCat OneBot11协议', type: 'plugin',
@@ -74,41 +95,71 @@ const CHANNEL_DEFS: ChannelDef[] = [
     ] },
   { id: 'webchat', label: 'WebChat', description: 'Gateway WebChat UI (内置)', type: 'builtin', configFields: [] },
   // Plugin channels
-  { id: 'feishu', label: '飞书 / Lark', description: '飞书机器人 WebSocket (插件)', type: 'plugin',
-    configFields: [
-      { key: 'appId', label: 'App ID', type: 'text' },
-      { key: 'appSecret', label: 'App Secret', type: 'password' },
-      { key: 'streaming', label: '流式卡片输出', type: 'toggle', help: '仅飞书官方版支持，开启后回复以流式卡片形式呈现' },
-      { key: 'threadSession', label: '话题独立上下文', type: 'toggle', help: '仅飞书官方版支持，每个话题拥有独立会话并可并行' },
-      { key: 'replyInThread', label: '话题内回复', type: 'toggle', help: '仅 ClawTeam 版支持，优先在话题内回复' },
-      { key: 'typingIndicator', label: '输入中提示', type: 'toggle', help: '仅 ClawTeam 版支持' },
-      { key: 'resolveSenderNames', label: '解析发送者名称', type: 'toggle', help: '仅 ClawTeam 版支持，自动解析飞书用户显示名' },
-      { key: 'dynamicAgentCreation', label: '动态创建 Agent', type: 'toggle', help: '仅 ClawTeam 版支持，按场景动态创建 Agent' },
+  { id: 'feishu-official', label: '飞书（官方版）', description: '飞书官方插件，支持流式卡片与话题独立上下文', type: 'plugin',
+    configFields: [...FEISHU_SHARED_FIELDS,
+      { key: 'streaming', label: '流式卡片输出', type: 'toggle', help: '官方版支持，开启后回复以流式卡片形式呈现' },
+      { key: 'replyInThread', label: '话题内回复', type: 'toggle' },
+    ] },
+  { id: 'feishu-community', label: '飞书（社区版）', description: 'ClawTeam 社区维护版本，兼容历史用户配置', type: 'plugin',
+    configFields: [...FEISHU_SHARED_FIELDS,
+      { key: 'replyInThread', label: '话题内回复', type: 'toggle', help: '优先在话题内回复；社区版更常用' },
+      { key: 'typingIndicator', label: '输入中提示', type: 'toggle', help: '社区版支持' },
+      { key: 'resolveSenderNames', label: '解析发送者名称', type: 'toggle', help: '社区版支持，自动解析飞书用户显示名' },
+      { key: 'dynamicAgentCreation', label: '动态创建 Agent', type: 'toggle', help: '社区版支持，按场景动态创建 Agent' },
     ] },
   { id: 'qqbot', label: 'QQ 官方机器人', description: 'QQ开放平台官方Bot API (插件)', type: 'plugin',
     configFields: [
       { key: 'appId', label: 'App ID', type: 'text' },
       { key: 'clientSecret', label: 'Client Secret', type: 'password' },
+      { key: 'markdownSupport', label: '启用 Markdown 消息', type: 'toggle' },
+      { key: 'dmPolicy', label: '私聊策略', type: 'select', options: ['pairing', 'open', 'allowlist'] },
+      { key: 'groupPolicy', label: '群聊策略', type: 'select', options: ['open', 'allowlist'] },
+      { key: 'requireMention', label: '群聊需@触发', type: 'toggle' },
+      { key: 'historyLimit', label: '上下文条数', type: 'number' },
+      { key: 'textChunkLimit', label: '文本分片长度', type: 'number' },
+      { key: 'replyFinalOnly', label: '仅发送最终结果', type: 'toggle' },
     ] },
   { id: 'dingtalk', label: '钉钉', description: '钉钉机器人 (插件)', type: 'plugin',
     configFields: [
       { key: 'clientId', label: 'Client ID', type: 'text' },
       { key: 'clientSecret', label: 'Client Secret', type: 'password' },
+      { key: 'connectionMode', label: '连接模式', type: 'select', options: ['stream', 'webhook'] },
+      { key: 'dmPolicy', label: '私聊策略', type: 'select', options: ['pairing', 'open', 'allowlist'] },
+      { key: 'groupPolicy', label: '群聊策略', type: 'select', options: ['open', 'allowlist'] },
+      { key: 'requireMention', label: '群聊需@触发', type: 'toggle' },
+      { key: 'textChunkLimit', label: '文本分片长度', type: 'number' },
+      { key: 'enableAICard', label: '启用 AI 卡片', type: 'toggle' },
+      { key: 'gatewayToken', label: 'Gateway Token', type: 'password' },
+      { key: 'gatewayPassword', label: 'Gateway Password', type: 'password' },
     ] },
   { id: 'wecom', label: '企业微信（智能机器人）', description: '企业微信智能机器人，被动回复、群聊友好', type: 'plugin',
     configFields: [
+      { key: 'name', label: '通道名称', type: 'text' },
       { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/wecom' },
       { key: 'token', label: 'Token', type: 'password' },
       { key: 'encodingAESKey', label: 'EncodingAESKey', type: 'password', help: '43 位字符' },
+      { key: 'receiveId', label: 'Receive ID', type: 'text' },
+      { key: 'welcomeText', label: '欢迎语', type: 'text' },
+      { key: 'defaultAccount', label: '默认账号', type: 'text' },
+      { key: 'dmPolicy', label: '私聊策略', type: 'select', options: ['pairing', 'open', 'allowlist'] },
+      { key: 'groupPolicy', label: '群聊策略', type: 'select', options: ['open', 'allowlist'] },
+      { key: 'requireMention', label: '群聊需@触发', type: 'toggle' },
     ] },
   { id: 'wecom-app', label: '企业微信（自建应用）', description: '企业微信自建应用，支持更完整 API 与微信入口', type: 'plugin',
     configFields: [
+      { key: 'name', label: '通道名称', type: 'text' },
       { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/wecom-app' },
       { key: 'token', label: 'Token', type: 'password' },
       { key: 'encodingAESKey', label: 'EncodingAESKey', type: 'password', help: '43 位字符' },
       { key: 'corpId', label: 'Corp ID', type: 'text' },
       { key: 'corpSecret', label: 'Corp Secret', type: 'password' },
       { key: 'agentId', label: 'Agent ID', type: 'text' },
+      { key: 'receiveId', label: 'Receive ID', type: 'text' },
+      { key: 'welcomeText', label: '欢迎语', type: 'text' },
+      { key: 'defaultAccount', label: '默认账号', type: 'text' },
+      { key: 'dmPolicy', label: '私聊策略', type: 'select', options: ['pairing', 'open', 'allowlist'] },
+      { key: 'groupPolicy', label: '群聊策略', type: 'select', options: ['open', 'allowlist'] },
+      { key: 'requireMention', label: '群聊需@触发', type: 'toggle' },
       { key: 'apiBaseUrl', label: 'API Base URL', type: 'text', placeholder: 'https://qyapi.weixin.qq.com', help: '可选；VPS 代理时可填写' },
     ] },
   { id: 'msteams', label: 'Microsoft Teams', description: 'Bot Framework (插件)', type: 'plugin',
@@ -147,7 +198,8 @@ const CHANNEL_REQUIRED_FIELDS: Record<string, string[]> = {
   signal: ['apiUrl', 'phoneNumber'],
   googlechat: ['serviceAccountKey', 'webhookUrl'],
   bluebubbles: ['serverUrl', 'password'],
-  feishu: ['appId', 'appSecret'],
+  'feishu-official': ['appId', 'appSecret'],
+  'feishu-community': ['appId', 'appSecret'],
   qqbot: ['appId', 'clientSecret'],
   dingtalk: ['clientId', 'clientSecret'],
   wecom: ['token', 'encodingAESKey'],
@@ -174,18 +226,73 @@ function getFeishuPluginEntryId(ocConfig: any): string {
   return 'feishu';
 }
 
-function isQQPluginInstalled(installedPlugins: any[]) {
-  return installedPlugins.some((p: any) => p.id === 'qq');
+function getChannelPluginTarget(channelId: string, ocConfig: any): string {
+  if (channelId === 'feishu-official') return 'feishu-openclaw-plugin';
+  if (channelId === 'feishu-community') return 'feishu';
+  return channelId;
+}
+
+function isFeishuVariantInstalled(installedPlugins: any[], variant: keyof typeof FEISHU_PLUGIN_VARIANTS) {
+  const target = FEISHU_PLUGIN_VARIANTS[variant].id;
+  return installedPlugins.some((p: any) => p.id === target);
+}
+
+function getInstalledPluginMeta(installedPlugins: any[], pluginId: string) {
+  return installedPlugins.find((p: any) => p.id === pluginId) || null;
+}
+
+function schemaFieldTypeToInput(schemaType: any, property: any): ConfigField['type'] | null {
+  if (property?.enum && Array.isArray(property.enum)) return 'select';
+  if (schemaType === 'boolean') return 'toggle';
+  if (schemaType === 'integer' || schemaType === 'number') return 'number';
+  if (schemaType === 'string') {
+    const format = String(property?.format || '').toLowerCase();
+    if (format.includes('password') || /secret|token|key/i.test(String(property?.title || '') + ' ' + String(property?.description || ''))) {
+      return 'password';
+    }
+    return 'text';
+  }
+  return null;
+}
+
+function fieldsFromConfigSchema(schemaRaw: any, existingKeys: Set<string>): ConfigField[] {
+  let schema = schemaRaw;
+  if (!schema) return [];
+  if (typeof schemaRaw === 'string') {
+    try { schema = JSON.parse(schemaRaw); } catch { return []; }
+  }
+  const properties = schema?.properties;
+  if (!properties || typeof properties !== 'object') return [];
+  const fields: ConfigField[] = [];
+  for (const [key, property] of Object.entries(properties as Record<string, any>)) {
+    if (existingKeys.has(key)) continue;
+    const type = schemaFieldTypeToInput(property?.type, property);
+    if (!type) continue;
+    fields.push({
+      key,
+      label: String(property?.title || key),
+      type,
+      options: Array.isArray(property?.enum) ? property.enum.map((item: any) => String(item)) : undefined,
+      placeholder: typeof property?.default === 'string' ? property.default : undefined,
+      help: typeof property?.description === 'string' ? property.description : undefined,
+    });
+  }
+  return fields;
+}
+
+function visibleConfigFields(channelId: string, ocConfig: any): ChannelDef['configFields'] {
+  const def = CHANNEL_DEFS.find(item => item.id === channelId);
+  if (!def) return [];
+  return def.configFields;
 }
 
 // Determine channel status: 'enabled' (green), 'configured' (red/orange), 'unconfigured' (gray)
 function getChannelStatus(ch: ChannelDef, ocConfig: any): 'enabled' | 'configured' | 'unconfigured' {
-  const chConf = ocConfig?.channels?.[ch.id] || {};
-  const pluginConf = ocConfig?.plugins?.entries?.[ch.id] || {};
-  // 飞书特殊处理：任一变体 enabled 即视为 enabled
-  const isEnabled = ch.id === 'feishu'
-    ? (pluginConf.enabled || ocConfig?.plugins?.entries?.['feishu-openclaw-plugin']?.enabled || chConf.enabled)
-    : (chConf.enabled || pluginConf.enabled);
+  const chKey = ch.id === 'feishu-official' || ch.id === 'feishu-community' ? 'feishu' : ch.id;
+  const chConf = ocConfig?.channels?.[chKey] || {};
+  const pluginTarget = getChannelPluginTarget(ch.id, ocConfig);
+  const pluginConf = ocConfig?.plugins?.entries?.[pluginTarget] || {};
+  const isEnabled = chConf.enabled || pluginConf.enabled;
   // Check if any config field has a value
   const hasConfig = ch.configFields.some(f => {
     const v = chConf[f.key];
@@ -242,6 +349,7 @@ export default function Channels() {
   const [diagnoseResult, setDiagnoseResult] = useState<any>(null);
   const [restarting, setRestarting] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<any[]>([]);
+  const [qqChannelState, setQQChannelState] = useState<any>(null);
   const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const navigate = useNavigate();
 
@@ -285,6 +393,70 @@ export default function Channels() {
     finally { setInstallingSw(null); setTimeout(() => { setMsg(''); loadSoftware(); }, 5000); }
   };
 
+  const handleQQChannelAction = async (action: 'setup' | 'repair' | 'cleanup') => {
+    setInstallingSw(`qq-${action}`);
+    try {
+      const fn = action === 'setup' ? api.setupQQChannel : action === 'repair' ? api.repairQQChannel : api.cleanupQQChannel;
+      const r = await fn();
+      if (r.ok) setMsg(`✅ QQ 通道${action === 'setup' ? '安装' : action === 'repair' ? '修复' : '清理'}任务已创建，请在消息中心查看进度`);
+      else setMsg(`❌ ${r.error || '操作失败'}`);
+    } catch {
+      setMsg('❌ 请求失败');
+    } finally {
+      setInstallingSw(null);
+      setTimeout(() => {
+        setMsg('');
+        loadSoftware();
+        loadInstalledPlugins();
+        loadQQChannelState();
+        reload();
+      }, 5000);
+    }
+  };
+
+  const handleUninstallPluginById = async (pluginId: string, label?: string) => {
+    if (!pluginId) return;
+    const shouldCleanup = window.confirm(`是否在卸载 ${label || pluginId} 时一并清理对应通道配置？\n\n选择“确定” = 卸载并清理配置\n选择“取消” = 仅卸载插件，保留配置`);
+    const confirmed = shouldCleanup || window.confirm(`确认仅卸载 ${label || pluginId} 插件并保留现有配置？`);
+    if (!confirmed) return;
+    setInstallingSw(`uninstall-${pluginId}`);
+    try {
+      const r = await api.uninstallPlugin(pluginId, shouldCleanup);
+      if (r.ok) setMsg(r.message || '卸载任务已创建，请在消息中心查看进度');
+      else setMsg(`❌ ${r.error || '卸载失败'}`);
+    } catch {
+      setMsg('❌ 卸载失败');
+    } finally {
+      setInstallingSw(null);
+      setTimeout(() => {
+        setMsg('');
+        loadInstalledPlugins();
+        reload();
+      }, 5000);
+    }
+  };
+
+  const handleInstallChannelPlugin = async (pluginId: string) => {
+    setInstallingSw(`install-${pluginId}`);
+    try {
+      const r = await api.installPlugin(pluginId);
+      if (r.ok) {
+        setMsg(r.message || '插件安装任务已创建，请在消息中心查看进度');
+      } else {
+        setMsg(`❌ ${r.error || '安装失败'}`);
+      }
+    } catch {
+      setMsg('❌ 安装失败');
+    } finally {
+      setInstallingSw(null);
+      setTimeout(() => {
+        setMsg('');
+        loadInstalledPlugins();
+        reload();
+      }, 5000);
+    }
+  };
+
   const isContainerInstalled = (id: string) => {
     const sw = softwareList.find(s => s.id === id);
     return sw?.installed || false;
@@ -294,19 +466,19 @@ export default function Channels() {
     api.getInstalledPlugins().then((r: any) => { if (r.ok) setInstalledPlugins(r.plugins || []); }).catch(() => {});
   };
 
+  const loadQQChannelState = () => {
+    api.getQQChannelState().then((r: any) => { if (r.ok) setQQChannelState(r.state || null); }).catch(() => {});
+  };
+
   const isPluginInstalled = (channelId: string) => {
-    // 飞书特殊处理：任一版本已安装即视为已安装
-    if (channelId === 'feishu') {
-      return installedPlugins.some((p: any) => p.id === 'feishu' || p.id === 'feishu-openclaw-plugin');
-    }
-    // Check if plugin extension is installed (in extensions dir or plugins.installs)
-    return installedPlugins.some((p: any) => p.id === channelId);
+    const pluginId = getChannelPluginTarget(channelId, ocConfig);
+    return installedPlugins.some((p: any) => p.id === pluginId);
   };
 
   const validateChannelBeforeEnable = (channelId: string) => {
     const requiredFields = CHANNEL_REQUIRED_FIELDS[channelId] || [];
     if (!requiredFields.length) return '';
-    const cfg = ocConfig?.channels?.[channelId] || {};
+      const cfg = ocConfig?.channels?.[(channelId === 'feishu-official' || channelId === 'feishu-community') ? 'feishu' : channelId] || {};
     const missingLabels = requiredFields
       .filter(key => {
         const value = key.split('.').reduce((obj: any, part: string) => obj?.[part], cfg);
@@ -327,9 +499,10 @@ export default function Channels() {
     api.getStatus().then(r => { if (r.ok) setStatus(r); });
     api.getOpenClawConfig().then(r => { if (r.ok) setOcConfig(r.config || {}); });
     api.getRequests().then(r => { if (r.ok) setRequests(r.requests || []); });
+    loadQQChannelState();
   };
 
-  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); loadInstalledPlugins(); }, []);
+  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); loadInstalledPlugins(); loadQQChannelState(); }, []);
   useEffect(() => {
     const queryChannel = normalizeChannelQuery(searchParams.get('channel'));
     if (!queryChannel) return;
@@ -340,15 +513,13 @@ export default function Channels() {
     const queryChannel = normalizeChannelQuery(searchParams.get('channel'));
     if (queryChannel || selectedChannel) return;
     const firstEnabled = CHANNEL_DEFS.find(ch => {
-      const chConf = ocConfig?.channels?.[ch.id] || {};
-      const pluginConf = ocConfig?.plugins?.entries?.[ch.id] || {};
-      if (ch.id === 'feishu') {
-        return chConf.enabled || pluginConf.enabled || ocConfig?.plugins?.entries?.['feishu-openclaw-plugin']?.enabled;
-      }
+      const channelKey = ch.id === 'feishu-official' || ch.id === 'feishu-community' ? 'feishu' : ch.id;
+      const chConf = ocConfig?.channels?.[channelKey] || {};
+      const pluginConf = ocConfig?.plugins?.entries?.[getChannelPluginTarget(ch.id, ocConfig)] || {};
       return chConf.enabled || pluginConf.enabled;
     });
     if (firstEnabled) setSelectedChannel(firstEnabled.id);
-    else setSelectedChannel('feishu');
+    else setSelectedChannel('feishu-official');
   }, [ocConfig, selectedChannel]);
   useEffect(() => {
     const timer = setInterval(loadNapcatStatus, 30000);
@@ -383,13 +554,20 @@ export default function Channels() {
   };
 
   const isChannelEnabled = (channelId: string) => {
-    if (channelId === 'feishu') {
-      return ocPlugins[channelId]?.enabled || ocPlugins['feishu-openclaw-plugin']?.enabled || ocChannels[channelId]?.enabled || false;
-    }
-    return ocChannels[channelId]?.enabled || ocPlugins[channelId]?.enabled || false;
+    const channelKey = channelId === 'feishu-official' || channelId === 'feishu-community' ? 'feishu' : channelId;
+    const pluginKey = getChannelPluginTarget(channelId, ocConfig);
+    return ocChannels[channelKey]?.enabled || ocPlugins[pluginKey]?.enabled || false;
   };
 
   const currentDef = CHANNEL_DEFS.find(c => c.id === selectedChannel);
+  const currentPluginMeta = currentDef?.type === 'plugin' ? getInstalledPluginMeta(installedPlugins, getChannelPluginTarget(currentDef.id, ocConfig)) : null;
+  const currentFields = (() => {
+    if (!currentDef) return [] as ConfigField[];
+    const base = visibleConfigFields(currentDef.id, ocConfig);
+    const existing = new Set(base.map(field => field.key));
+    const extra = currentDef.type === 'plugin' ? fieldsFromConfigSchema(currentPluginMeta?.configSchema, existing) : [];
+    return [...base, ...extra];
+  })();
 
   const syncSelectedChannel = (channelId: string) => {
     setSelectedChannel(channelId);
@@ -431,8 +609,9 @@ export default function Channels() {
       const formEl = document.getElementById('channel-config-form') as HTMLFormElement;
       if (!formEl) return;
       const formData = new FormData(formEl);
-      const chData: any = JSON.parse(JSON.stringify(ocChannels[currentDef.id] || {}));
-      for (const f of currentDef.configFields) {
+      const channelKey = currentDef.id === 'feishu-official' || currentDef.id === 'feishu-community' ? 'feishu' : currentDef.id;
+      const chData: any = JSON.parse(JSON.stringify(ocChannels[channelKey] || {}));
+      for (const f of currentFields) {
         if (f.type === 'toggle') continue; // toggles handled separately via handleToggleField
         const val = formData.get(f.key);
         if (val !== null && val !== '') {
@@ -454,11 +633,10 @@ export default function Channels() {
           }
         }
       }
-      const r = await api.updateChannel(currentDef.id, chData);
+      const r = await api.updateChannel(channelKey, chData);
       if (!r.ok) throw new Error(r.error || t.channels.saveFailed);
-      // 飞书特殊处理：保存时操作当前活跃变体的 plugin entry
-      if (currentDef.id === 'feishu') {
-        const entryId = getFeishuPluginEntryId(ocConfig);
+      if (currentDef.id === 'feishu-official' || currentDef.id === 'feishu-community') {
+        const entryId = getChannelPluginTarget(currentDef.id, ocConfig);
         await api.updatePlugin(entryId, { enabled: chData.enabled || false });
       } else if (currentDef.type === 'plugin') {
         await api.updatePlugin(currentDef.id, { enabled: chData.enabled || false });
@@ -471,7 +649,8 @@ export default function Channels() {
   };
 
   const handleToggleField = async (channelId: string, key: string) => {
-    const chConf = JSON.parse(JSON.stringify(ocChannels[channelId] || {}));
+    const channelKey = channelId === 'feishu-official' || channelId === 'feishu-community' ? 'feishu' : channelId;
+    const chConf = JSON.parse(JSON.stringify(ocChannels[channelKey] || {}));
     const keys = key.split('.');
     if (keys.length === 1) {
       chConf[key] = !chConf[key];
@@ -481,7 +660,7 @@ export default function Channels() {
       cur[keys[keys.length - 1]] = !cur[keys[keys.length - 1]];
     }
     try {
-      const r = await api.updateChannel(channelId, chConf);
+      const r = await api.updateChannel(channelKey, chConf);
       if (channelId === 'qq' && r?.message) {
         setMsg(r.message);
         setTimeout(() => setMsg(''), 5000);
@@ -751,72 +930,31 @@ export default function Channels() {
 
         {/* Channel config */}
         <div className="lg:col-span-3 space-y-6">
-          {/* QQ plugin not installed overlay */}
-          {currentDef && currentDef.id === 'qq' && !isQQPluginInstalled(installedPlugins) && (
+          {/* QQ setup overlay */}
+          {currentDef && currentDef.id === 'qq' && qqChannelState && (!qqChannelState.pluginInstalled || !qqChannelState.napcatInstalled || !qqChannelState.configured) && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center space-y-4">
               <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center">
                 <AlertTriangle size={32} className="text-amber-500" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">QQ 个人号插件未安装</h3>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">QQ 通道尚未完成接入</h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  安装 QQ (NapCat) 前会先安装 QQ 个人号插件。当前未检测到插件，请重新执行 NapCat 安装；若仍失败，请检查加速源或手动前往插件中心安装 `qq` 插件。
+                  默认不会自动改写 QQ 配置。只有你点击“一键安装 QQ 通道”后，系统才会按需安装 QQ 插件、安装 NapCat、备份配置、写入 QQ 通道配置并重启 OpenClaw。
                 </p>
+              </div>
+              <div className="text-xs text-gray-500 bg-gray-50 dark:bg-gray-900/40 rounded-xl px-4 py-3 inline-block">
+                组件状态：QQ 插件 {qqChannelState.pluginInstalled ? '已安装' : '未安装'} · NapCat {qqChannelState.napcatInstalled ? '已安装' : '未安装'} · 配置 {qqChannelState.configured ? '已写入' : '未写入'}
               </div>
               <div className="flex items-center justify-center gap-3 flex-wrap">
                 <button
-                  onClick={() => handleInstallContainer('napcat')}
+                  onClick={() => handleQQChannelAction('setup')}
                   disabled={installingSw !== null}
                   className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
                 >
                   {installingSw ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                  {installingSw ? '安装中...' : '重新安装 QQ (NapCat)'}
-                </button>
-                <button onClick={() => navigate('/plugins')} className={`${modern ? 'page-modern-action px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all'}`}>
-                  <Package size={16} />
-                  前往插件中心
+                  {installingSw ? '处理中...' : '一键安装 QQ 通道'}
                 </button>
               </div>
-            </div>
-          )}
-
-          {/* QQ NapCat not installed overlay */}
-          {currentDef && currentDef.id === 'qq' && isQQPluginInstalled(installedPlugins) && !isContainerInstalled('napcat') && softwareList.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center space-y-4">
-              <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
-                <Package size={32} className="text-gray-400" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">NapCat (QQ个人号) 未安装</h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  {serverPlatform === 'windows'
-                    ? '需要安装 NapCat Shell 才能使用 QQ 个人号通道。安装后将自动配置 OneBot11 WebSocket 协议。'
-                    : '需要安装 NapCat Docker 容器才能使用 QQ 个人号通道。安装后将自动配置 OneBot11 WebSocket 协议。'}
-                </p>
-              </div>
-              {serverPlatform === 'windows' ? (
-                <button
-                  onClick={() => handleInstallContainer('napcat')}
-                  disabled={installingSw !== null}
-                  className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
-                >
-                  {installingSw ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                  {installingSw ? '安装中...' : '一键安装 NapCat Shell'}
-                </button>
-              ) : !isContainerInstalled('docker') ? (
-                <div className="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-4 py-2 inline-block">
-                  需要先安装 Docker，请前往 系统配置 → 运行环境 安装
-                </div>
-              ) : (
-                <button
-                  onClick={() => handleInstallContainer('napcat')}
-                  disabled={installingSw !== null}
-                  className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
-                >
-                  {installingSw ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                  {installingSw ? '安装中...' : '一键安装 NapCat Docker'}
-                </button>
-              )}
               <p className="text-[11px] text-gray-400">安装进度可在右上角铃铛中的消息中心实时查看</p>
             </div>
           )}
@@ -830,18 +968,25 @@ export default function Channels() {
               <div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">{currentDef.label} 插件未安装</h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  需要先安装 {currentDef.label} 插件才能配置此通道。请前往「插件中心」安装。
+                  需要先安装 {currentDef.label} 插件才能配置此通道。面板会优先调用 OpenClaw 官方安装命令，失败后再回退到兼容安装方式。
                 </p>
               </div>
-              <button onClick={() => navigate('/plugins')} className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}>
-                <Download size={16} />
-                前往插件中心安装
-              </button>
+              {(
+                <div className="flex items-center justify-center gap-3 flex-wrap">
+                  <button onClick={() => handleInstallChannelPlugin(getChannelPluginTarget(currentDef.id, ocConfig))} disabled={installingSw !== null} className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl disabled:opacity-50'}`}>
+                    {installingSw === `install-${getChannelPluginTarget(currentDef.id, ocConfig)}` ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    一键安装插件
+                  </button>
+                  <button onClick={() => navigate('/plugins')} className={`${modern ? 'page-modern-action px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all'}`}>
+                    <Package size={16} />前往插件中心
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           {currentDef && !(
-            (currentDef.id === 'qq' && (!isQQPluginInstalled(installedPlugins) || (!isContainerInstalled('napcat') && softwareList.length > 0))) ||
+            (currentDef.id === 'qq' && qqChannelState && (!qqChannelState.pluginInstalled || !qqChannelState.napcatInstalled || !qqChannelState.configured)) ||
             (currentDef.type === 'plugin' && currentDef.id !== 'qq' && !isPluginInstalled(currentDef.id))
           ) && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-6">
@@ -904,10 +1049,36 @@ export default function Channels() {
                       )}
                     </div>
                   )}
+                  {currentDef.id === 'qq' && qqChannelState && (
+                    <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-700 pl-3 ml-1">
+                      <button onClick={() => handleQQChannelAction('repair')} disabled={installingSw !== null} className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors'}`}>
+                        {installingSw === 'qq-repair' ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />}修复配置
+                      </button>
+                      {(qqChannelState.residualConfig || qqChannelState.configured) && (
+                        <button onClick={() => handleQQChannelAction('cleanup')} disabled={installingSw !== null} className={`${modern ? 'page-modern-danger px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors'}`}>
+                          {installingSw === 'qq-cleanup' ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}清理残留
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {currentDef.type === 'plugin' && currentDef.id !== 'qq' && isPluginInstalled(currentDef.id) && (
+                    <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-700 pl-3 ml-1">
+                      <button onClick={() => handleUninstallPluginById(getChannelPluginTarget(currentDef.id, ocConfig), currentDef.label)} disabled={installingSw !== null} className={`${modern ? 'page-modern-danger px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors'}`}>
+                        {installingSw === `uninstall-${getChannelPluginTarget(currentDef.id, ocConfig)}` ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}卸载插件
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* NapCat Connection Status */}
+              {currentDef.id === 'qq' && qqChannelState && (
+                <div className="rounded-xl border border-blue-100 dark:border-blue-900/30 bg-blue-50/40 dark:bg-blue-950/10 px-4 py-3 text-xs text-blue-800 dark:text-blue-200">
+                  组件安装：QQ 插件 {qqChannelState.pluginInstalled ? '已安装' : '未安装'} · NapCat {qqChannelState.napcatInstalled ? '已安装' : '未安装'} · 配置状态 {qqChannelState.configured ? '已写入' : '未写入'} · 通道启用 {qqChannelState.enabled ? '已启用' : '未启用'}
+                  {qqChannelState.message && <div className="mt-1 text-blue-700/80 dark:text-blue-300/80">{qqChannelState.message}</div>}
+                </div>
+              )}
+
               {currentDef.id === 'qq' && napcatStatus && (
                 <div className={`rounded-xl border p-4 mb-2 ${
                   napcatStatus.status === 'online' ? 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/30' :
@@ -1050,48 +1221,40 @@ export default function Channels() {
                 </div>
               )}
 
-              {/* 飞书双版本选择器 */}
-              {currentDef.id === 'feishu' && (
+              {(currentDef.id === 'feishu-official' || currentDef.id === 'feishu-community') && (
                 <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-900/10 p-4 space-y-3">
-                  <div className="text-sm font-semibold text-gray-900 dark:text-white">当前飞书实现</div>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                      getActiveFeishuVariant(ocConfig) === 'official'
-                        ? 'border-violet-500 bg-violet-100/50 dark:bg-violet-900/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-violet-300 dark:hover:border-violet-600'
-                    }`}>
-                      <input type="radio" name="feishu-variant" value="official"
-                        checked={getActiveFeishuVariant(ocConfig) === 'official'}
-                        onChange={() => handleSwitchFeishuVariant('official')}
-                        className="mt-0.5 accent-violet-600" />
-                      <div>
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">飞书官方版</div>
-                        <div className="text-[11px] text-gray-500 mt-0.5">支持用户身份授权、文档/日历/任务操作、流式卡片、话题独立上下文</div>
-                      </div>
-                    </label>
-                    <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                      getActiveFeishuVariant(ocConfig) === 'clawteam'
-                        ? 'border-violet-500 bg-violet-100/50 dark:bg-violet-900/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-violet-300 dark:hover:border-violet-600'
-                    }`}>
-                      <input type="radio" name="feishu-variant" value="clawteam"
-                        checked={getActiveFeishuVariant(ocConfig) === 'clawteam'}
-                        onChange={() => handleSwitchFeishuVariant('clawteam')}
-                        className="mt-0.5 accent-violet-600" />
-                      <div>
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">ClawTeam 社区版</div>
-                        <div className="text-[11px] text-gray-500 mt-0.5">社区维护的基础飞书通道插件，支持话题回复、输入提示等</div>
-                      </div>
-                    </label>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-white">飞书版本状态</div>
+                    <div className="text-[11px] text-violet-700 dark:text-violet-300">
+                      当前启用：{getActiveFeishuVariant(ocConfig) === 'official' ? '飞书官方版' : getActiveFeishuVariant(ocConfig) === 'clawteam' ? 'ClawTeam 社区版' : '未选择'}
+                    </div>
                   </div>
-                  {!getActiveFeishuVariant(ocConfig) && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400">未检测到已启用的飞书插件，请选择一个版本并启用</p>
-                  )}
+                  <div className="text-[11px] text-gray-500 dark:text-gray-400 bg-white/70 dark:bg-gray-900/30 rounded-lg px-3 py-2 border border-violet-100 dark:border-violet-900/30">
+                    这两个飞书通道在界面上独立展示，但底层共用 `channels.feishu` 配置入口。当前页面只展示当前通道对应版本推荐的配置项。
+                  </div>
+                </div>
+              )}
+
+              {(currentDef.id === 'wecom' || currentDef.id === 'wecom-app' || currentDef.id === 'dingtalk' || currentDef.id === 'qqbot') && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/30 p-4 space-y-2">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">官方配置说明</div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-5">
+                    {currentDef.id === 'wecom' && '当前表单按企业微信智能机器人回调模式整理，重点字段包括 webhookPath、token、encodingAESKey、receiveId、dmPolicy、groupPolicy、requireMention。'}
+                    {currentDef.id === 'wecom-app' && '当前表单按企业微信自建应用模式整理，重点字段包括 corpId、corpSecret、agentId、webhookPath、token、encodingAESKey、receiveId 与 API Base URL。'}
+                    {currentDef.id === 'dingtalk' && '当前表单按钉钉官方插件推荐字段整理，重点字段包括 clientId、clientSecret、connectionMode、dmPolicy、groupPolicy、requireMention、enableAICard。'}
+                    {currentDef.id === 'qqbot' && '当前表单按 QQ 官方机器人插件推荐字段整理，重点字段包括 appId、clientSecret；后续会继续补充历史长度、分片长度、媒体限制等官方字段。'}
+                  </div>
+                </div>
+              )}
+
+              {currentDef.type === 'plugin' && currentPluginMeta?.configSchema && (
+                <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/10 px-4 py-3 text-[11px] text-emerald-800 dark:text-emerald-200">
+                  已检测到该插件自带 `configSchema`。当前页面优先展示整理后的官方推荐字段，下一步会继续把 schema 中的更多字段补充到可视化配置里。
                 </div>
               )}
 
               <form id="channel-config-form" className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5" onSubmit={e => { e.preventDefault(); handleSave(); }}>
-                {currentDef.configFields.map(field => {
+                {currentFields.map(field => {
                   const currentVal = getFieldValue(currentDef.id, field.key);
                   const isFullWidth = field.type === 'toggle' || field.key === 'webhookUrl' || field.key === 'webhookPath' || field.key === 'token' || field.key === 'accessToken' || field.key === 'appSecret' || field.key === 'encodingAESKey' || field.key === 'apiBaseUrl';
                   
@@ -1115,6 +1278,15 @@ export default function Channels() {
                             {currentVal ? t.channels.opened : t.channels.closed}
                           </span>
                         </div>
+                      ) : field.type === 'select' ? (
+                        <select
+                          name={field.key}
+                          defaultValue={currentVal ?? ''}
+                          className="w-full px-3.5 py-2 text-sm border rounded-lg bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/30 focus:border-violet-500 outline-none"
+                        >
+                          <option value="">请选择</option>
+                          {(field.options || []).map(option => <option key={option} value={option}>{option}</option>)}
+                        </select>
                       ) : (
                         <div className="relative">
                           <input
@@ -1139,7 +1311,7 @@ export default function Channels() {
                 })}
               </form>
 
-              {currentDef.configFields.length === 0 && (
+              {currentFields.length === 0 && (
                 <div className="py-12 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-xl">
                   <Sparkles size={32} className="mb-2 opacity-20" />
                   <p className="text-sm">{t.channels.noConfigNeeded}</p>

@@ -216,6 +216,10 @@ func runServer(stopCh chan struct{}) {
 			auth.PUT("/openclaw/channels/:id", handler.SaveChannel(cfg, procMgr))
 			auth.PUT("/openclaw/plugins/:id", handler.SavePlugin(cfg))
 			auth.POST("/openclaw/toggle-channel", handler.ToggleChannel(cfg, procMgr, napcatMon, sysLog))
+			auth.GET("/openclaw/qq-channel/state", handler.GetQQChannelState(cfg))
+			auth.POST("/openclaw/qq-channel/setup", handler.SetupQQChannel(cfg, taskMgr, procMgr))
+			auth.POST("/openclaw/qq-channel/repair", handler.RepairQQChannel(cfg, taskMgr, procMgr))
+			auth.POST("/openclaw/qq-channel/cleanup", handler.CleanupQQChannel(cfg, taskMgr, procMgr))
 			auth.POST("/openclaw/feishu-variant", handler.SwitchFeishuVariant(cfg, procMgr, sysLog))
 
 			// 进程管理
@@ -364,8 +368,8 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/plugins/installed", handler.GetInstalledPlugins(pluginMgr))
 			auth.GET("/plugins/:id", handler.GetPluginDetail(pluginMgr))
 			auth.POST("/plugins/registry/refresh", handler.RefreshPluginRegistry(pluginMgr))
-			auth.POST("/plugins/install", handler.InstallPlugin(pluginMgr))
-			auth.DELETE("/plugins/:id", handler.UninstallPlugin(pluginMgr))
+			auth.POST("/plugins/install", handler.InstallPlugin(pluginMgr, taskMgr))
+			auth.DELETE("/plugins/:id", handler.UninstallPlugin(pluginMgr, taskMgr))
 			auth.PUT("/plugins/:id/toggle", handler.TogglePlugin(pluginMgr))
 			auth.GET("/plugins/:id/config", handler.GetPluginConfig(pluginMgr))
 			auth.PUT("/plugins/:id/config", handler.UpdatePluginConfig(pluginMgr))

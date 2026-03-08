@@ -2,14 +2,15 @@
 # ClawPanel 一键安装脚本 (Windows PowerShell)
 # 兼容 PowerShell 5.1 及以上版本
 # 用法 (管理员 PowerShell):
-#   irm https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/install.ps1 | iex
+#   irm http://39.102.53.188:16198/clawpanel/scripts/install.ps1 | iex
 # 或:
-#   Invoke-WebRequest -Uri https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/install.ps1 -OutFile install.ps1; .\install.ps1
+#   Invoke-WebRequest -Uri http://39.102.53.188:16198/clawpanel/scripts/install.ps1 -OutFile install.ps1; .\install.ps1
 # ============================================================
 
 $ErrorActionPreference = "Stop"
 
 $REPO = "zhaoxinyi02/ClawPanel"
+$ACCEL_BASE = "http://39.102.53.188:16198/clawpanel"
 $INSTALL_DIR = "C:\ClawPanel"
 $SERVICE_NAME = "ClawPanel"
 $PORT = "19527"
@@ -18,8 +19,11 @@ $PORT = "19527"
 Write-Host "  [ClawPanel] 获取最新版本信息..." -ForegroundColor Cyan
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases/latest" -UseBasicParsing
-    $tag = [string]$releaseInfo.tag_name
+    $releaseInfo = Invoke-RestMethod -Uri "$ACCEL_BASE/update.json" -UseBasicParsing
+    $tag = [string]$releaseInfo.latest_version
+    if ([string]::IsNullOrWhiteSpace($tag)) {
+        throw "empty latest_version"
+    }
     $VERSION = $tag -replace '^v', ''
     if ([string]::IsNullOrWhiteSpace($VERSION) -or ($VERSION -notmatch '^[0-9][0-9A-Za-z._-]*$')) {
         throw "invalid tag_name: $tag"
@@ -27,7 +31,13 @@ try {
     Write-Host "  [ClawPanel] 最新版本: v$VERSION" -ForegroundColor Green
 } catch {
     Write-Host "  [ClawPanel] 无法获取最新版本，使用默认版本..." -ForegroundColor Yellow
-    $VERSION = "5.0.32"
+    try {
+        $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases/latest" -UseBasicParsing
+        $tag = [string]$releaseInfo.tag_name
+        $VERSION = $tag -replace '^v', ''
+    } catch {
+        $VERSION = "5.2.2"
+    }
 }
 
 $BINARY_NAME = "clawpanel-v${VERSION}-windows-amd64.exe"
@@ -82,7 +92,8 @@ Log "目录已创建: $INSTALL_DIR"
 
 # ---- Step 2 ----
 Step 2 $TOTAL "下载 ClawPanel v$VERSION..."
-$downloadUrl = "https://github.com/$REPO/releases/download/v$VERSION/$BINARY_NAME"
+$downloadUrl = "$ACCEL_BASE/releases/$BINARY_NAME"
+$fallbackUrl = "https://github.com/$REPO/releases/download/v$VERSION/$BINARY_NAME"
 $targetPath = "$INSTALL_DIR\clawpanel.exe"
 Info "下载地址: $downloadUrl"
 
@@ -93,7 +104,11 @@ try {
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $targetPath -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $targetPath -UseBasicParsing
+    } catch {
+        Invoke-WebRequest -Uri $fallbackUrl -OutFile $targetPath -UseBasicParsing
+    }
     $fileSize = [math]::Round((Get-Item $targetPath).Length / 1MB, 1)
     Log "下载完成 (${fileSize} MB)"
 } catch {

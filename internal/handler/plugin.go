@@ -2,9 +2,11 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zhaoxinyi02/ClawPanel/internal/plugin"
+	"github.com/zhaoxinyi02/ClawPanel/internal/taskman"
 )
 
 // GetPluginList returns all installed plugins + registry plugins
@@ -65,7 +67,7 @@ func RefreshPluginRegistry(pm *plugin.Manager) gin.HandlerFunc {
 }
 
 // InstallPlugin installs a plugin from registry or custom URL
-func InstallPlugin(pm *plugin.Manager) gin.HandlerFunc {
+func InstallPlugin(pm *plugin.Manager, tm *taskman.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			PluginID string `json:"pluginId"`
@@ -82,25 +84,43 @@ func InstallPlugin(pm *plugin.Manager) gin.HandlerFunc {
 			c.JSON(http.StatusConflict, gin.H{"ok": false, "error": conflicts[0], "conflicts": conflicts})
 			return
 		}
-
-		if err := pm.Install(req.PluginID, req.Source); err != nil {
-			c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
+		if tm != nil && tm.HasRunningTask("install_plugin_"+req.PluginID) {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "该插件已有安装任务正在进行中"})
 			return
 		}
-
-		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "插件安装成功"})
+		task := tm.CreateTask("安装插件 "+req.PluginID, "install_plugin_"+req.PluginID)
+		go func() {
+			task.AppendLog("🚀 开始安装插件 " + req.PluginID)
+			err := pm.InstallWithProgress(req.PluginID, req.Source, task.AppendLog)
+			tm.FinishTask(task, err)
+		}()
+		c.JSON(http.StatusOK, gin.H{"ok": true, "taskId": task.ID, "message": "插件安装任务已创建，请在消息中心查看进度"})
 	}
 }
 
 // UninstallPlugin removes a plugin
-func UninstallPlugin(pm *plugin.Manager) gin.HandlerFunc {
+func UninstallPlugin(pm *plugin.Manager, tm *taskman.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		if err := pm.Uninstall(id); err != nil {
-			c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
+		cleanupConfig := true
+		if raw := strings.TrimSpace(c.Query("cleanupConfig")); raw != "" {
+			cleanupConfig = raw != "false" && raw != "0"
+		}
+		if tm != nil && tm.HasRunningTask("uninstall_plugin_"+id) {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "该插件已有卸载任务正在进行中"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "插件已卸载"})
+		task := tm.CreateTask("卸载插件 "+id, "uninstall_plugin_"+id)
+		go func() {
+			if cleanupConfig {
+				task.AppendLog("🧹 卸载后将一并清理对应通道配置")
+			} else {
+				task.AppendLog("📦 卸载后将保留通道配置")
+			}
+			err := pm.UninstallWithProgress(id, cleanupConfig, task.AppendLog)
+			tm.FinishTask(task, err)
+		}()
+		c.JSON(http.StatusOK, gin.H{"ok": true, "taskId": task.ID, "message": "插件卸载任务已创建，请在消息中心查看进度"})
 	}
 }
 
