@@ -301,7 +301,7 @@ export const mockApi = {
           skill.description.toLowerCase().includes(q),
         )
       : FAKE_CLAWHUB_SKILLS;
-    return { ok: true, skills: JSON.parse(JSON.stringify(skills)) };
+    return { ok: true, registryBase: 'https://clawhub.ai', skills: JSON.parse(JSON.stringify(skills)) };
   },
   installClawHubSkill: async (skillId: string, _agentId?: string) => {
     await delay(800);

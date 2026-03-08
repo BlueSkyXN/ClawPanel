@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -281,7 +283,12 @@ func TestSearchAndInstallClawHubUseOfficialAPIContract(t *testing.T) {
 	oldClient := clawHubHTTPClient
 	clawHubHTTPClient = server.Client()
 	defer func() { clawHubHTTPClient = oldClient }()
-	t.Setenv("CLAWHUB_SITE", server.URL)
+	registryURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+	registryURL.User = url.UserPassword("alice", "secret")
+	t.Setenv("CLAWHUB_SITE", registryURL.String())
 
 	r := gin.New()
 	r.GET("/system/skills", GetSkills(cfg))
@@ -295,14 +302,18 @@ func TestSearchAndInstallClawHubUseOfficialAPIContract(t *testing.T) {
 		t.Fatalf("search expected 200, got %d: %s", searchW.Code, searchW.Body.String())
 	}
 	var searchResp struct {
-		OK     bool               `json:"ok"`
-		Skills []clawHubSkillItem `json:"skills"`
+		OK           bool               `json:"ok"`
+		RegistryBase string             `json:"registryBase"`
+		Skills       []clawHubSkillItem `json:"skills"`
 	}
 	if err := json.Unmarshal(searchW.Body.Bytes(), &searchResp); err != nil {
 		t.Fatalf("decode search response: %v", err)
 	}
 	if len(searchResp.Skills) != 1 || searchResp.Skills[0].Installed {
 		t.Fatalf("expected one not-installed search result, got %#v", searchResp.Skills)
+	}
+	if got := strings.TrimSpace(searchResp.RegistryBase); got != server.URL {
+		t.Fatalf("expected public registry base %q, got %q", server.URL, got)
 	}
 
 	installReq := httptest.NewRequest(http.MethodPost, "/system/clawhub/install", bytes.NewReader([]byte(`{"skillId":"weather","agentId":"main"}`)))
@@ -349,6 +360,9 @@ func TestSearchAndInstallClawHubUseOfficialAPIContract(t *testing.T) {
 	if got := strings.TrimSpace(getString(originPayload, "slug")); got != "weather" {
 		t.Fatalf("expected origin slug weather, got %q", got)
 	}
+	if got := strings.TrimSpace(getString(originPayload, "registry")); got != server.URL {
+		t.Fatalf("expected origin registry %q, got %q", server.URL, got)
+	}
 
 	searchAfterReq := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
 	searchAfterW := httptest.NewRecorder()
@@ -356,15 +370,16 @@ func TestSearchAndInstallClawHubUseOfficialAPIContract(t *testing.T) {
 	if searchAfterW.Code != http.StatusOK {
 		t.Fatalf("search after install expected 200, got %d: %s", searchAfterW.Code, searchAfterW.Body.String())
 	}
-	searchResp = struct {
-		OK     bool               `json:"ok"`
-		Skills []clawHubSkillItem `json:"skills"`
-	}{}
-	if err := json.Unmarshal(searchAfterW.Body.Bytes(), &searchResp); err != nil {
+	var searchAfterResp struct {
+		OK           bool               `json:"ok"`
+		RegistryBase string             `json:"registryBase"`
+		Skills       []clawHubSkillItem `json:"skills"`
+	}
+	if err := json.Unmarshal(searchAfterW.Body.Bytes(), &searchAfterResp); err != nil {
 		t.Fatalf("decode search-after response: %v", err)
 	}
-	if len(searchResp.Skills) != 1 || !searchResp.Skills[0].Installed || searchResp.Skills[0].InstalledVersion != "1.2.0" {
-		t.Fatalf("expected installed search result after install, got %#v", searchResp.Skills)
+	if len(searchAfterResp.Skills) != 1 || !searchAfterResp.Skills[0].Installed || searchAfterResp.Skills[0].InstalledVersion != "1.2.0" {
+		t.Fatalf("expected installed search result after install, got %#v", searchAfterResp.Skills)
 	}
 
 	skillsReq := httptest.NewRequest(http.MethodGet, "/system/skills?agentId=main", nil)
@@ -440,6 +455,317 @@ func TestSearchClawHubMarksExistingSkillDirectoryInstalled(t *testing.T) {
 	}
 }
 
+func TestSearchClawHubUsesSiteForPublicLinksWhenRegistryOverrideSet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{
+				"slug":        "weather",
+				"displayName": "Weather",
+				"summary":     "Public weather skill",
+				"version":     "1.2.0",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_REGISTRY", server.URL)
+	t.Setenv("CLAWHUB_SITE", "https://clawhub.example.com")
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		RegistryBase string             `json:"registryBase"`
+		Skills       []clawHubSkillItem `json:"skills"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := strings.TrimSpace(resp.RegistryBase); got != "https://clawhub.example.com" {
+		t.Fatalf("expected public site base, got %q", got)
+	}
+	if len(resp.Skills) != 1 {
+		t.Fatalf("expected one search result, got %#v", resp.Skills)
+	}
+}
+
+func TestSearchClawHubRejectsInvalidRegistryScheme(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	t.Setenv("CLAWHUB_SITE", "javascript:alert(1)")
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for invalid registry scheme, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSearchClawHubDoesNotExposeRegistryCredentialsOnTransportError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	t.Setenv("CLAWHUB_SITE", "https://alice:secret@example.com")
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("boom")
+		}),
+	}
+	defer func() { clawHubHTTPClient = oldClient }()
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 for transport failure, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "alice") || strings.Contains(body, "secret") {
+		t.Fatalf("expected response body to redact registry credentials, got %s", body)
+	}
+	if !strings.Contains(body, "request failed") {
+		t.Fatalf("expected sanitized transport error message, got %s", body)
+	}
+}
+
+func TestSearchClawHubDoesNotMarkManagedSkillInstalled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	writeSkillFixture(t, filepath.Join(openClawDir, "skills", "weather"), "Weather", "managed install", "")
+	writeJSON(t, filepath.Join(openClawDir, "skills", "weather", "package.json"), map[string]interface{}{
+		"name":    "weather",
+		"version": "9.9.9",
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{
+				"slug":        "weather",
+				"displayName": "Weather",
+				"summary":     "Public weather skill",
+				"version":     "1.2.0",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_SITE", server.URL)
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Skills []clawHubSkillItem `json:"skills"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Skills) != 1 || resp.Skills[0].Installed || resp.Skills[0].InstalledVersion != "" {
+		t.Fatalf("expected managed skill to remain installable in workspace, got %#v", resp.Skills)
+	}
+}
+
+func TestSearchClawHubIgnoresStaleLockWithoutSkillDirectory(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	writeJSON(t, filepath.Join(workspace, ".clawhub", "lock.json"), map[string]interface{}{
+		"version": 1,
+		"skills": map[string]interface{}{
+			"weather": map[string]interface{}{"version": "0.0.1", "installedAt": 1},
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{
+				"slug":        "weather",
+				"displayName": "Weather",
+				"summary":     "Public weather skill",
+				"version":     "1.2.0",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_SITE", server.URL)
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Skills []clawHubSkillItem `json:"skills"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Skills) != 1 || resp.Skills[0].Installed || resp.Skills[0].InstalledVersion != "" {
+		t.Fatalf("expected stale lock without skill dir to be ignored, got %#v", resp.Skills)
+	}
+}
+
+func TestSearchClawHubIgnoresManagedSkillWhenOnlyStaleLockExists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	writeSkillFixture(t, filepath.Join(openClawDir, "skills", "weather"), "Weather", "managed install", "")
+	writeJSON(t, filepath.Join(openClawDir, "skills", "weather", "package.json"), map[string]interface{}{
+		"name":    "weather",
+		"version": "9.9.9",
+	})
+	writeJSON(t, filepath.Join(workspace, ".clawhub", "lock.json"), map[string]interface{}{
+		"version": 1,
+		"skills": map[string]interface{}{
+			"weather": map[string]interface{}{"version": "0.0.1", "installedAt": 1},
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{
+				"slug":        "weather",
+				"displayName": "Weather",
+				"summary":     "Public weather skill",
+				"version":     "1.2.0",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_SITE", server.URL)
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Skills []clawHubSkillItem `json:"skills"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Skills) != 1 || resp.Skills[0].Installed || resp.Skills[0].InstalledVersion != "" {
+		t.Fatalf("expected stale workspace lock plus managed skill to remain not installed, got %#v", resp.Skills)
+	}
+}
+
 func TestSkillsHandlersRejectInvalidAgentID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -493,6 +819,65 @@ func TestInstallClawHubSkillRejectsInvalidSlug(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid skill slug, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInstallClawHubSkillAllowsWorkspaceOverrideOfManagedSkill(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	writeSkillFixture(t, filepath.Join(openClawDir, "skills", "weather"), "Weather", "managed install", "")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/skills/weather":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"skill": map[string]interface{}{
+					"slug":        "weather",
+					"displayName": "Weather",
+					"summary":     "Public weather skill",
+					"moderation":  map[string]interface{}{"isMalwareBlocked": false},
+				},
+				"latestVersion": map[string]interface{}{"version": "1.2.0"},
+			})
+		case "/api/v1/download":
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(buildZipFixture(t, map[string]string{
+				"SKILL.md":     "---\nname: Weather\ndescription: Public weather skill\n---\nUse weather data.\n",
+				"package.json": `{"name":"weather","description":"Public weather skill"}`,
+			}))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_SITE", server.URL)
+
+	r := gin.New()
+	r.POST("/system/clawhub/install", InstallClawHubSkill(cfg))
+	req := httptest.NewRequest(http.MethodPost, "/system/clawhub/install", bytes.NewReader([]byte(`{"skillId":"weather","agentId":"main"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for workspace override of managed skill, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "skills", "weather", "SKILL.md")); err != nil {
+		t.Fatalf("expected workspace-local skill install, got %v", err)
 	}
 }
 
@@ -567,6 +952,65 @@ func TestInstallClawHubSkillRejectsSymlinkedSkillsRoot(t *testing.T) {
 	}
 }
 
+func TestSearchClawHubRejectsSymlinkedSkillsRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	outside := filepath.Join(root, "outside")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(filepath.Join(outside, "weather"), 0755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	writeSkillFixture(t, filepath.Join(outside, "weather"), "Weather", "outside skill", "")
+	if err := os.Symlink(outside, filepath.Join(workspace, "skills")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{
+				"slug":        "weather",
+				"displayName": "Weather",
+				"summary":     "Public weather skill",
+				"version":     "1.2.0",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_SITE", server.URL)
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for symlinked skills root, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestInstallClawHubSkillRejectsSymlinkedClawHubStateDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink handling differs on Windows")
@@ -638,7 +1082,7 @@ func TestInstallClawHubSkillRejectsSymlinkedClawHubStateDir(t *testing.T) {
 	}
 }
 
-func TestInstallClawHubSkillRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
+func TestClawHubHandlersRejectSymlinkedWorkspaceAncestor(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink handling differs on Windows")
 	}
@@ -698,6 +1142,7 @@ func TestInstallClawHubSkillRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
 
 	r := gin.New()
 	r.POST("/system/clawhub/install", InstallClawHubSkill(cfg))
+
 	req := httptest.NewRequest(http.MethodPost, "/system/clawhub/install", bytes.NewReader([]byte(`{"skillId":"weather","agentId":"main"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -707,6 +1152,56 @@ func TestInstallClawHubSkillRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(realRoot, "shared", "main", "skills", "weather", "SKILL.md")); err == nil {
 		t.Fatalf("expected install to avoid writing through symlinked workspace ancestor")
+	}
+}
+
+func TestSearchClawHubAllowsTrustedTempDirAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := t.TempDir()
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil || resolvedRoot == "" || resolvedRoot == root {
+		t.Skip("temp dir does not use a trusted system alias on this platform")
+	}
+
+	openClawDir := filepath.Join(root, "openclaw")
+	workspace := filepath.Join(root, "workspace", "main")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []map[string]interface{}{{
+				"slug":        "weather",
+				"displayName": "Weather",
+				"summary":     "Public weather skill",
+				"version":     "1.2.0",
+			}},
+		})
+	}))
+	defer server.Close()
+	oldClient := clawHubHTTPClient
+	clawHubHTTPClient = server.Client()
+	defer func() { clawHubHTTPClient = oldClient }()
+	t.Setenv("CLAWHUB_SITE", server.URL)
+
+	r := gin.New()
+	r.GET("/system/clawhub/search", SearchClawHub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/clawhub/search?q=weather&agentId=main", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for trusted temp alias workspace, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -751,6 +1246,12 @@ func findSkillByID(skills []skillInfo, id string) *skillInfo {
 		}
 	}
 	return nil
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
 }
 
 func hasPluginID(plugins []pluginInfo, id string) bool {

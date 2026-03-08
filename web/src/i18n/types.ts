@@ -262,7 +262,13 @@ export interface Translations {
     configRequirements: string;
     envVars: string;
     binTools: string;
+    anyBinTools: string;
     cliTool: string;
+    anyCliTool: string;
+    anyBinHint: string;
+    configKeys: string;
+    configField: string;
+    configKeyHint: string;
     installPath: string;
     // Source badges
     srcInstalled: string;

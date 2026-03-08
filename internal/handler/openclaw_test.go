@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -209,7 +210,7 @@ func TestSaveOpenClawConfigPreservesMissingHiddenFieldsWithoutOverwritingExplici
 		t.Fatalf("expected session.dmScope to keep explicit change, got %q", got)
 	}
 	maintenance, _ := session["maintenance"].(map[string]interface{})
-	if got := toString(maintenance["maxEntries"]); got != "50" {
+	if got := strings.TrimSpace(fmt.Sprint(maintenance["maxEntries"])); got != "50" {
 		t.Fatalf("expected missing session.maintenance.maxEntries to be preserved, got %#v", maintenance)
 	}
 }

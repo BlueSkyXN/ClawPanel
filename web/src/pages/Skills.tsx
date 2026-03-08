@@ -17,7 +17,7 @@ interface SkillEntry {
   version?: string;
   installedAt?: string;
   metadata?: any;
-  requires?: { env?: string[]; bins?: string[] };
+  requires?: { env?: string[]; bins?: string[]; anyBins?: string[]; config?: string[] };
   path?: string;
   skillKey?: string;
 }
@@ -44,6 +44,28 @@ interface ClawHubSkill {
   installed?: boolean;
 }
 
+function normalizeClawHubRegistryBase(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function buildClawHubLink(base: string, path: string): string {
+  const normalizedBase = normalizeClawHubRegistryBase(base);
+  if (!normalizedBase) return '';
+  return `${normalizedBase}${path}`;
+}
+
 export default function Skills() {
   const { t } = useI18n();
   const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
@@ -51,6 +73,7 @@ export default function Skills() {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [clawHubSkills, setClawHubSkills] = useState<ClawHubSkill[]>([]);
+  const [clawHubRegistryBase, setClawHubRegistryBase] = useState('');
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -100,6 +123,7 @@ export default function Skills() {
       const r = await api.searchClawHub(search, selectedAgent);
       if (r.ok && r.skills) {
         setClawHubSkills(r.skills || []);
+        setClawHubRegistryBase(normalizeClawHubRegistryBase(r.registryBase));
       }
     } catch (err) {
       console.error('Failed to load ClawHub:', err);
@@ -182,6 +206,7 @@ export default function Skills() {
     const q = search.toLowerCase();
     return s.id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
   });
+  const clawHubSiteUrl = buildClawHubLink(clawHubRegistryBase, '/skills?sort=downloads');
 
   const getSourceBadge = (source: string) => {
     const badges: Record<string, { label: string; color: string }> = {
@@ -293,7 +318,7 @@ export default function Skills() {
                       {skill.description && <p className="text-xs text-gray-500 truncate mt-0.5">{skill.description}</p>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
-                      {skill.requires && (skill.requires.env || skill.requires.bins) && (
+                      {skill.requires && (skill.requires.env?.length || skill.requires.bins?.length || skill.requires.anyBins?.length || skill.requires.config?.length) && (
                         <button onClick={() => setConfigSkill(skill)} className="text-[10px] px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-600 border border-amber-100 dark:border-amber-800 hover:bg-amber-100 transition-colors shrink-0">
                           {t.skills.configRequired}
                         </button>
@@ -375,10 +400,17 @@ export default function Skills() {
                 {hubLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {hubLoading ? t.skills.syncing : t.skills.syncStore}
               </button>
-              <a href="https://clawhub.ai/skills?sort=downloads" target="_blank" rel="noopener noreferrer"
-                className={`${modern ? 'page-modern-accent' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-colors'}`}>
-                <ExternalLink size={14} />{t.skills.visitSite}
-              </a>
+              {clawHubSiteUrl ? (
+                <a href={clawHubSiteUrl} target="_blank" rel="noopener noreferrer"
+                  className={`${modern ? 'page-modern-accent' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-colors'}`}>
+                  <ExternalLink size={14} />{t.skills.visitSite}
+                </a>
+              ) : (
+                <button type="button" disabled
+                  className={`${modern ? 'page-modern-accent opacity-60 cursor-not-allowed' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-600/70 text-white cursor-not-allowed shadow-sm shadow-violet-200 dark:shadow-none'}`}>
+                  <ExternalLink size={14} />{t.skills.visitSite}
+                </button>
+              )}
             </div>
           </div>
 
@@ -404,8 +436,10 @@ export default function Skills() {
                   <p className="text-sm">{t.skills.noSkillsFound}</p>
                 </div>
               ) : hubFiltered.map(skill => {
-                const isInstalled = skill.installed;
+                const installedVersion = skill.installedVersion || '';
+                const isInstalled = !!skill.installed;
                 const isInstalling = installing === skill.id;
+                const detailUrl = buildClawHubLink(clawHubRegistryBase, `/skills/${encodeURIComponent(skill.id)}`);
                 return (
                   <div key={skill.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl flex flex-col h-full' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 flex flex-col h-full'} hover:shadow-md transition-all group`}>
                     {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
@@ -418,9 +452,9 @@ export default function Skills() {
                           <h4 className="text-sm font-bold text-gray-900 dark:text-white truncate" title={skill.name}>{skill.name}</h4>
                           <div className="flex items-center gap-2 mt-0.5">
                             {skill.version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 font-mono">v{skill.version}</span>}
-                            {skill.installed && skill.installedVersion && (
+                            {isInstalled && installedVersion && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 font-mono">
-                                {t.common.installed} v{skill.installedVersion}
+                                {t.common.installed} v{installedVersion}
                               </span>
                             )}
                             {skill.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400">{skill.category}</span>}
@@ -435,10 +469,17 @@ export default function Skills() {
                     </div>
 
                     <div className="flex items-center gap-2 pt-3 border-t border-gray-50 dark:border-gray-800">
-                      <a href={`https://clawhub.ai/skills/${skill.id}`} target="_blank" rel="noopener noreferrer"
-                        className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors'}`} title="在 ClawHub 查看详情">
-                        <ExternalLink size={16} />
-                      </a>
+                      {detailUrl ? (
+                        <a href={detailUrl} target="_blank" rel="noopener noreferrer"
+                          className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors'}`} title="在 ClawHub 查看详情">
+                          <ExternalLink size={16} />
+                        </a>
+                      ) : (
+                        <button type="button" disabled
+                          className={`${modern ? 'page-modern-action p-2 opacity-60 cursor-not-allowed' : 'p-2 rounded-lg text-gray-300 dark:text-gray-600 cursor-not-allowed'}`} title="ClawHub">
+                          <ExternalLink size={16} />
+                        </button>
+                      )}
                       {isInstalled ? (
                         <button disabled className={`${modern ? 'page-modern-success flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default'}`}>
                           <Check size={14} />{t.common.installed}
@@ -533,6 +574,42 @@ export default function Skills() {
                           ))}
                         </div>
                       )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {configSkill.requires?.anyBins && configSkill.requires.anyBins.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                    <Package size={14} /> {t.skills.anyBinTools}
+                  </h4>
+                  {configSkill.requires.anyBins.map(bin => (
+                    <div key={bin} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <code className="text-sm font-bold font-mono text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-900/30 px-2 py-0.5 rounded">{bin}</code>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 font-medium">{t.skills.anyCliTool}</span>
+                      </div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        {t.skills.anyBinHint}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {configSkill.requires?.config && configSkill.requires.config.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                    <FolderOpen size={14} /> {t.skills.configKeys}
+                  </h4>
+                  {configSkill.requires.config.map(configKey => (
+                    <div key={configKey} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <code className="text-sm font-bold font-mono text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded">{configKey}</code>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 font-medium">{t.skills.configField}</span>
+                      </div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        {t.skills.configKeyHint}
+                      </p>
                     </div>
                   ))}
                 </div>

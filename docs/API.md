@@ -453,6 +453,10 @@ Authorization: Bearer <token>
 - `agentId`（可选）：用于标记当前 Agent 工作区下已安装的 ClawHub 技能
 - `limit`（可选）：返回条数上限，默认 30，最大 100
 
+**返回要点：**
+- `registryBase`：本次搜索实际使用的 ClawHub 站点公开基地址；若同时配置 `CLAWHUB_REGISTRY` 与 `CLAWHUB_SITE`，这里优先返回 `CLAWHUB_SITE`。后端会校验其必须为绝对 `http(s)` URL，并在返回前剥离可能存在的内嵌凭证，前端详情链接与“前往官网”按钮应基于此字段构造
+- `skills[*].installed` / `skills[*].installedVersion`：仅反映目标 Agent 工作区 `skills/` 与 `.clawhub/lock.json` 中的安装状态
+
 ### POST `/api/system/clawhub/install`
 将指定 ClawHub 技能安装到目标 Agent 工作区的 `skills/` 目录，并同步写入工作区 `.clawhub/lock.json` 与技能目录 `.clawhub/origin.json`。
 
