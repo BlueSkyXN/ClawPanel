@@ -871,11 +871,9 @@ func shouldStrictValidateAgentAvatar(existingAgent, payload map[string]interface
 }
 
 func validateAgentUniqueness(cfg *config.Config, list []map[string]interface{}, id, workspace, agentDir, skipID string) error {
+	// workspace 允许绝对路径在 OpenClawDir 外部（如外部硬盘），仅做归一化
+	workspace = normalizeAgentPath(cfg.OpenClawDir, workspace)
 	var err error
-	workspace, err = normalizeAgentPathWithinBase(cfg.OpenClawDir, workspace)
-	if err != nil {
-		return fmt.Errorf("workspace 必须位于 OpenClaw 目录内")
-	}
 	agentDir, err = normalizeAgentPathWithinBase(cfg.OpenClawDir, agentDir)
 	if err != nil {
 		return fmt.Errorf("agentDir 必须位于 OpenClaw 目录内")
@@ -888,8 +886,8 @@ func validateAgentUniqueness(cfg *config.Config, list []map[string]interface{}, 
 		if curID == id {
 			return fmt.Errorf("agent id 已存在: %s", id)
 		}
-		normalizedWorkspace, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["workspace"]))
-		if err == nil && workspace != "" && workspace == normalizedWorkspace {
+		normalizedWorkspace := normalizeAgentPath(cfg.OpenClawDir, toString(item["workspace"]))
+		if workspace != "" && workspace == normalizedWorkspace {
 			return fmt.Errorf("workspace 已被占用: %s", workspace)
 		}
 		normalizedAgentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["agentDir"]))

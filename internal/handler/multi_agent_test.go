@@ -755,7 +755,7 @@ func TestGetOpenClawAgentCoreFilesRejectsSymlinkedWorkspaceAncestor(t *testing.T
 	}
 }
 
-func TestGetOpenClawAgentCoreFilesRejectsWorkspaceOutsideManagedRoots(t *testing.T) {
+func TestGetOpenClawAgentCoreFilesAllowsConfiguredWorkspaceOutsideStandardRoots(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -782,12 +782,12 @@ func TestGetOpenClawAgentCoreFilesRejectsWorkspaceOutsideManagedRoots(t *testing
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for explicitly configured workspace, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-func TestSaveOpenClawAgentCoreFileRejectsWorkspaceOutsideManagedRoots(t *testing.T) {
+func TestSaveOpenClawAgentCoreFileAllowsConfiguredWorkspaceOutsideStandardRoots(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -813,11 +813,11 @@ func TestSaveOpenClawAgentCoreFileRejectsWorkspaceOutsideManagedRoots(t *testing
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for explicitly configured workspace, got %d: %s", w.Code, w.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "MEMORY.md")); !os.IsNotExist(err) {
-		t.Fatalf("expected outside workspace to remain untouched, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(workspace, "MEMORY.md")); os.IsNotExist(err) {
+		t.Fatalf("expected MEMORY.md to be written in outside workspace")
 	}
 }
 
@@ -1865,6 +1865,18 @@ func TestValidateAgentUniquenessRejectsAbsoluteAliasConflict(t *testing.T) {
 	}, "work", "", "custom/work-agent", "")
 	if err == nil {
 		t.Fatalf("expected absolute alias conflict")
+	}
+}
+
+func TestValidateAgentUniquenessAllowsWorkspaceOutsideBase(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	cfg := &config.Config{OpenClawDir: base}
+	// workspace 使用 OpenClawDir 外部的绝对路径（如外部硬盘）应当通过
+	err := validateAgentUniqueness(cfg, []map[string]interface{}{{"id": "main"}}, "work", "/Volumes/external/workspaces/work", "agents/work", "")
+	if err != nil {
+		t.Fatalf("workspace outside OpenClawDir should be allowed, got: %v", err)
 	}
 }
 

@@ -149,6 +149,26 @@ func managedAgentWorkspaceRoots(cfg *config.Config) []string {
 	if cfg.OpenClawWork != "" {
 		roots = append(roots, cfg.OpenClawWork)
 	}
+	// 将 agents.list 中显式配置的绝对 workspace 的父目录也视为受管根，
+	// 支持 workspace 放在外部硬盘等 OpenClawDir 之外的位置。
+	ocConfig, _ := cfg.ReadOpenClawJSON()
+	for _, item := range parseAgentsListFromConfig(ocConfig) {
+		ws := strings.TrimSpace(toString(item["workspace"]))
+		if ws == "" || !filepath.IsAbs(ws) {
+			continue
+		}
+		parent := filepath.Dir(filepath.Clean(ws))
+		dup := false
+		for _, r := range roots {
+			if filepath.Clean(r) == parent {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			roots = append(roots, parent)
+		}
+	}
 	return roots
 }
 
