@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zhaoxinyi02/ClawPanel/internal/buildinfo"
 	"github.com/zhaoxinyi02/ClawPanel/internal/config"
 	"github.com/zhaoxinyi02/ClawPanel/internal/eventlog"
 	"github.com/zhaoxinyi02/ClawPanel/internal/handler"
@@ -27,9 +28,6 @@ import (
 	"github.com/zhaoxinyi02/ClawPanel/internal/updater"
 	"github.com/zhaoxinyi02/ClawPanel/internal/websocket"
 )
-
-// Version is set by ldflags at build time: -X main.Version=...
-var Version = "dev"
 
 //go:embed all:frontend/dist
 var frontendFS embed.FS
@@ -51,7 +49,7 @@ func main() {
 			port = 19527
 		}
 		log.Printf("[Updater-Standalone] 独立更新子进程启动: version=%s dataDir=%s panelPort=%d openClawDir=%s", version, dataDir, port, openClawDir)
-		srv := updater.NewServer(version, dataDir, openClawDir, port)
+		srv := updater.NewServer(version, dataDir, openClawDir, port, buildinfo.NormalizedEdition())
 		srv.RunStandalone()
 		return
 	}
@@ -146,22 +144,20 @@ func runServer(stopCh chan struct{}) {
 		defer evListener.Stop()
 	}
 
-	// 启动 NapCat 连接监控 (仅当 QQ 通道启用时)
+	// 启动 NapCat 连接监控
 	var napcatMon *monitor.NapCatMonitor
-	if qqEnabled {
-		napcatMon = monitor.NewNapCatMonitor(cfg, wsHub, sysLog)
-		napcatMon.Start()
-		defer napcatMon.Stop()
-	} else {
-		// 创建空监控器供 API 使用
-		napcatMon = monitor.NewNapCatMonitor(cfg, wsHub, sysLog)
+	napcatMon = monitor.NewNapCatMonitor(cfg, wsHub, sysLog)
+	napcatMon.Start()
+	if !qqEnabled {
+		napcatMon.Pause()
 	}
+	defer napcatMon.Stop()
 
 	// 初始化插件管理器
 	pluginMgr := plugin.NewManager(cfg)
 
 	// 初始化面板自检更新器
-	panelUpdater := update.NewUpdater(Version, cfg.DataDir)
+	panelUpdater := update.NewUpdater(buildinfo.Version, cfg.DataDir, buildinfo.NormalizedEdition())
 	workflowRuntime := handler.NewWorkflowRuntime(db, cfg, wsHub)
 	if err := handler.EnsureWorkflowDefaults(db); err != nil {
 		log.Printf("[ClawPanel] 工作流模板初始化失败: %v", err)
@@ -171,7 +167,7 @@ func runServer(stopCh chan struct{}) {
 	}
 
 	// 启动独立更新服务（进程隔离，独立端口）
-	updaterSrv := updater.NewServer(Version, cfg.DataDir, cfg.OpenClawDir, cfg.Port)
+	updaterSrv := updater.NewServer(buildinfo.Version, cfg.DataDir, cfg.OpenClawDir, cfg.Port, buildinfo.NormalizedEdition())
 	updaterSrv.Start()
 
 	// 设置 Gin 模式
@@ -286,7 +282,7 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/system/update-status", handler.UpdateStatus(cfg))
 
 			// ClawPanel 面板自检更新
-			auth.GET("/panel/version", handler.GetPanelVersion(Version))
+			auth.GET("/panel/version", handler.GetPanelVersion(buildinfo.Version, buildinfo.NormalizedEdition()))
 			auth.GET("/panel/check-update", handler.CheckPanelUpdate(panelUpdater))
 			auth.POST("/panel/do-update", handler.DoPanelUpdate(panelUpdater))
 			auth.GET("/panel/update-progress", handler.PanelUpdateProgress(panelUpdater))
@@ -450,7 +446,7 @@ func runServer(stopCh chan struct{}) {
 
 	// 启动服务器
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
-	log.Printf("[ClawPanel] v%s 启动中 → http://%s", Version, addr)
+	log.Printf("[ClawPanel] %s v%s 启动中 → http://%s", strings.ToUpper(buildinfo.NormalizedEdition()), buildinfo.Version, addr)
 	log.Printf("[ClawPanel] 数据目录: %s", cfg.DataDir)
 	log.Printf("[ClawPanel] OpenClaw 目录: %s", cfg.OpenClawDir)
 

@@ -1137,7 +1137,7 @@ export default function SystemConfig() {
                 </div>
               </div>
               
-              <div className={`${modern ? 'rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl' : 'bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4'}`}>
+              {!versionInfo.bundled && <div className={`${modern ? 'rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl' : 'bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4'}`}>
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${versionInfo.updateAvailable ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'}`}>
                   {versionInfo.updateAvailable ? <AlertTriangle size={20} /> : <CheckCircle size={20} />}
                 </div>
@@ -1145,20 +1145,20 @@ export default function SystemConfig() {
                   <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">最新版本</p>
                   <p className="text-base font-bold text-gray-900 dark:text-white font-mono mt-0.5">{versionInfo.latestVersion || '-'}</p>
                 </div>
-              </div>
+              </div>}
               
               <div className={`${modern ? 'rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl' : 'bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4'}`}>
                 <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
-                  <RefreshCw size={20} className="text-gray-400" />
+                  {versionInfo.bundled ? <Shield size={20} className="text-gray-400" /> : <RefreshCw size={20} className="text-gray-400" />}
                 </div>
                 <div>
-                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">上次检查</p>
-                  <p className="text-xs text-gray-700 dark:text-gray-300 mt-1 font-medium">{versionInfo.lastCheckedAt ? new Date(versionInfo.lastCheckedAt).toLocaleString('zh-CN') : versionInfo.checkedAt ? new Date(versionInfo.checkedAt).toLocaleString('zh-CN') : '-'}</p>
+                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{versionInfo.bundled ? '版本来源' : '上次检查'}</p>
+                  <p className="text-xs text-gray-700 dark:text-gray-300 mt-1 font-medium">{versionInfo.bundled ? 'Lite 内嵌运行时' : (versionInfo.lastCheckedAt ? new Date(versionInfo.lastCheckedAt).toLocaleString('zh-CN') : versionInfo.checkedAt ? new Date(versionInfo.checkedAt).toLocaleString('zh-CN') : '-')}</p>
                 </div>
               </div>
             </div>
 
-            <UpdateSection versionInfo={versionInfo} updating={updating} setUpdating={setUpdating} updateStatus={updateStatus} setUpdateStatus={setUpdateStatus} updateLog={updateLog} setUpdateLog={setUpdateLog} checking={checking} setChecking={setChecking} setVersionInfo={setVersionInfo} setMsg={setMsg} loadVersion={loadVersion} />
+            {!versionInfo.bundled && <UpdateSection versionInfo={versionInfo} updating={updating} setUpdating={setUpdating} updateStatus={updateStatus} setUpdateStatus={setUpdateStatus} updateLog={updateLog} setUpdateLog={setUpdateLog} checking={checking} setChecking={setChecking} setVersionInfo={setVersionInfo} setMsg={setMsg} loadVersion={loadVersion} />}
           </div>
 
           {/* ClawPanel 面板自检更新 */}
@@ -1582,6 +1582,7 @@ function ChangePasswordSection() {
 
 function PanelUpdateSection() {
   const [panelVersion, setPanelVersion] = useState('');
+  const [edition, setEdition] = useState('pro');
   const [checkingPanel, setCheckingPanel] = useState(false);
   const [panelUpdateInfo, setPanelUpdateInfo] = useState<any>(null);
   const [navigating, setNavigating] = useState(false);
@@ -1589,7 +1590,12 @@ function PanelUpdateSection() {
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
-    api.getPanelVersion().then(r => { if (r.ok) setPanelVersion(r.version); }).catch(() => {});
+    api.getPanelVersion().then(r => {
+      if (r.ok) {
+        setPanelVersion(r.version);
+        setEdition(r.edition || 'pro');
+      }
+    }).catch(() => {});
   }, []);
 
   const checkPanelUpdate = async () => {
@@ -1622,7 +1628,7 @@ function PanelUpdateSection() {
   return (
     <div className="page-modern-panel p-6 space-y-5">
       <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-        <Box size={16} className="text-blue-500" /> ClawPanel 版本更新
+        <Box size={16} className="text-blue-500" /> {edition === 'lite' ? 'ClawPanel Lite 版本更新' : 'ClawPanel 版本更新'}
         <span className="text-[10px] font-mono text-gray-400 bg-gray-100 dark:bg-gray-900 px-2 py-0.5 rounded ml-1">{panelVersion || '...'}</span>
         <span className="text-[10px] text-gray-400 ml-auto">🛡️ 独立更新工具</span>
       </h3>
@@ -2738,24 +2744,29 @@ function SoftwareEnvironment({ envInfo, onRefresh }: { envInfo: any; onRefresh: 
   const [installing, setInstalling] = useState<string | null>(null);
   const [installMsg, setInstallMsg] = useState('');
   const [swData, setSwData] = useState<any[]>([]);
+  const [edition, setEdition] = useState('pro');
 
   useEffect(() => {
     api.getSoftwareList().then(r => { if (r.ok) setSwData(r.software || []); }).catch(() => {});
+    api.getPanelVersion().then(r => { if (r.ok) setEdition(r.edition || 'pro'); }).catch(() => {});
   }, []);
 
   // Merge backend software data with envInfo for display
   const getSw = (id: string) => swData.find(s => s.id === id);
 
   const softwareList = [
-    { id: 'nodejs', name: 'Node.js', value: envInfo.software?.node, required: true, category: 'runtime', installable: true },
+    { id: 'nodejs', name: 'Node.js', value: envInfo.software?.node, required: true, category: 'runtime', installable: getSw('nodejs')?.installable ?? true },
     { id: 'npm', name: 'npm', value: envInfo.software?.npm, required: false, installable: false, category: 'runtime' },
-    { id: 'docker', name: 'Docker', value: envInfo.software?.docker, required: false, category: 'runtime', installable: true },
-    { id: 'git', name: 'Git', value: envInfo.software?.git, required: false, category: 'runtime', installable: true },
+    { id: 'docker', name: 'Docker', value: envInfo.software?.docker, required: false, category: 'runtime', installable: getSw('docker')?.installable ?? true },
+    { id: 'git', name: 'Git', value: envInfo.software?.git, required: false, category: 'runtime', installable: getSw('git')?.installable ?? true },
     { id: 'python', name: 'Python 3', value: envInfo.software?.python, required: false, category: 'runtime', installable: true },
-    { id: 'openclaw', name: 'OpenClaw', value: envInfo.software?.openclaw, required: true, category: 'service', installable: true },
-    { id: 'napcat', name: getSw('napcat')?.name || 'NapCat (QQ个人号)', value: getSw('napcat')?.version || null, required: false, category: 'container', installable: true, status: getSw('napcat')?.status },
-    { id: 'wechat', name: getSw('wechat')?.name || '微信机器人', value: getSw('wechat')?.version || null, required: false, category: 'container', installable: true, status: getSw('wechat')?.status },
+    { id: 'openclaw', name: 'OpenClaw', value: envInfo.software?.openclaw, required: true, category: 'service', installable: getSw('openclaw')?.installable ?? true },
+    { id: 'napcat', name: getSw('napcat')?.name || 'NapCat (QQ个人号)', value: getSw('napcat')?.version || null, required: false, category: 'container', installable: getSw('napcat')?.installable ?? true, status: getSw('napcat')?.status },
+    { id: 'wechat', name: getSw('wechat')?.name || '微信机器人', value: getSw('wechat')?.version || null, required: false, category: 'container', installable: getSw('wechat')?.installable ?? true, status: getSw('wechat')?.status },
   ];
+  const visibleSoftwareList = edition === 'lite'
+    ? softwareList.filter(s => s.id === 'openclaw').map(s => ({ ...s, value: s.value || '2026.2.26' }))
+    : softwareList;
 
   const handleInstall = async (id: string) => {
     setInstalling(id);
@@ -2789,7 +2800,7 @@ function SoftwareEnvironment({ envInfo, onRefresh }: { envInfo: any; onRefresh: 
         </div>
       )}
       {categories.map(cat => {
-        const items = softwareList.filter(s => s.category === cat.key);
+        const items = visibleSoftwareList.filter(s => s.category === cat.key);
         if (items.length === 0) return null;
         return (
           <div key={cat.key} className="page-modern-panel p-6 space-y-4">

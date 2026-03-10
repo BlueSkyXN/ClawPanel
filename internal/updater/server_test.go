@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewServerInitializesState(t *testing.T) {
-	server := NewServer("v1.2.3", t.TempDir(), "/tmp/openclaw", 19527)
+	server := NewServer("v1.2.3", t.TempDir(), "/tmp/openclaw", 19527, "pro")
 
 	if server.currentVersion != "v1.2.3" {
 		t.Fatalf("currentVersion = %q, want v1.2.3", server.currentVersion)
@@ -54,7 +54,7 @@ func TestUpdaterHTMLIncludesInjectedValues(t *testing.T) {
 }
 
 func TestSetCORSAndCheckToken(t *testing.T) {
-	server := NewServer("v1.0.0", t.TempDir(), "", 19527)
+	server := NewServer("v1.0.0", t.TempDir(), "", 19527, "pro")
 	token := GenerateToken(19527)
 
 	recorder := httptest.NewRecorder()

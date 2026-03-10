@@ -100,14 +100,13 @@ func (m *Manager) Start() error {
 	// 启动前确保 openclaw.json 配置正确
 	m.ensureOpenClawConfig()
 
-	// 查找 openclaw 可执行文件
-	openclawBin := m.findOpenClawBin()
-	if openclawBin == "" {
-		return fmt.Errorf("未找到 openclaw 可执行文件，请确保已安装 OpenClaw")
+	cmd, err := m.cfg.OpenClawCommand("gateway")
+	if err != nil {
+		return err
 	}
 
 	// 构建启动命令
-	m.cmd = exec.Command(openclawBin, "gateway")
+	m.cmd = cmd
 	m.cmd.Dir = m.cfg.OpenClawDir
 	m.cmd.Env = append(buildProcessEnv(),
 		fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
@@ -173,8 +172,7 @@ func (m *Manager) Stop() error {
 	gatewayPort := m.getGatewayPort()
 
 	// First, ask OpenClaw CLI to stop the daemon gateway process.
-	if bin := m.findOpenClawBin(); bin != "" {
-		cmd := exec.Command(bin, "gateway", "stop")
+	if cmd, err := m.cfg.OpenClawCommand("gateway", "stop"); err == nil {
 		cmd.Dir = m.cfg.OpenClawDir
 		cmd.Env = append(buildProcessEnv(),
 			fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
@@ -516,6 +514,9 @@ func (m *Manager) getGatewayPort() string {
 			return fmt.Sprintf("%d", int(port))
 		}
 	}
+	if m.cfg != nil {
+		return fmt.Sprintf("%d", m.cfg.DefaultGatewayPort())
+	}
 	return "18789"
 }
 
@@ -770,7 +771,6 @@ func looksLikeOpenClawGatewayResponse(path string, statusCode int, headers http.
 	if strings.Contains(text, "openclaw control") || strings.Contains(text, "<openclaw-app") {
 		return true
 	}
-
 	if path == "/health" || path == "/healthz" {
 		if statusCode >= 200 && statusCode < 500 {
 			if strings.Contains(contentType, "json") && (strings.Contains(text, "\"ok\":true") || strings.Contains(text, "\"status\":\"ok\"") || strings.Contains(text, "\"status\":\"live\"") || strings.Contains(text, "healthy") || strings.Contains(text, "openclaw")) {
@@ -778,7 +778,6 @@ func looksLikeOpenClawGatewayResponse(path string, statusCode int, headers http.
 			}
 		}
 	}
-
 	return false
 }
 
@@ -978,6 +977,10 @@ func (m *Manager) ensureOpenClawConfig() {
 		gw["mode"] = "local"
 		changed = true
 	}
+	if _, ok := gw["port"]; !ok || fmt.Sprintf("%v", gw["port"]) == "" {
+		gw["port"] = m.cfg.DefaultGatewayPort()
+		changed = true
+	}
 
 	// Remove keys rejected by some OpenClaw gateway versions.
 	if _, ok := cfg["meta"]; ok {
@@ -1147,13 +1150,10 @@ func hasExistingQQIntegrationConfig(ocConfig map[string]interface{}) bool {
 	}
 	if pl, ok := ocConfig["plugins"].(map[string]interface{}); ok && pl != nil {
 		if ent, ok := pl["entries"].(map[string]interface{}); ok && ent != nil {
-			if _, ok := ent["qq"].(map[string]interface{}); ok {
-				return true
-			}
-		}
-		if ins, ok := pl["installs"].(map[string]interface{}); ok && ins != nil {
-			if _, ok := ins["qq"].(map[string]interface{}); ok {
-				return true
+			if qqEntry, ok := ent["qq"].(map[string]interface{}); ok && qqEntry != nil {
+				if enabled, _ := qqEntry["enabled"].(bool); enabled {
+					return true
+				}
 			}
 		}
 	}

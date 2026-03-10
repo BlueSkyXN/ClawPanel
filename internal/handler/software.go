@@ -20,6 +20,8 @@ import (
 	"github.com/zhaoxinyi02/ClawPanel/internal/taskman"
 )
 
+const pinnedOpenClawVersion = "2026.2.26"
+
 // SoftwareInfo 软件信息
 type SoftwareInfo struct {
 	ID          string `json:"id"`
@@ -44,9 +46,24 @@ type QQChannelState struct {
 }
 
 func hasQQPlugin(cfg *config.Config) bool {
+	if ocConfig, err := cfg.ReadOpenClawJSON(); err == nil && ocConfig != nil {
+		if plugins, ok := ocConfig["plugins"].(map[string]interface{}); ok && plugins != nil {
+			if installs, ok := plugins["installs"].(map[string]interface{}); ok && installs != nil {
+				if qqInstall, ok := installs["qq"].(map[string]interface{}); ok && qqInstall != nil {
+					if installPath := strings.TrimSpace(fmt.Sprint(qqInstall["installPath"])); installPath != "" {
+						if info, err := os.Stat(installPath); err == nil && info.IsDir() {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
 	for _, candidate := range []string{
 		filepath.Join(cfg.OpenClawDir, "extensions", "qq"),
 		filepath.Join(filepath.Dir(cfg.OpenClawDir), "extensions", "qq"),
+		filepath.Join(cfg.BundledOpenClawAppDir(), "extensions", "qq"),
+		cfg.BundledPluginDir("qq"),
 	} {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return true
@@ -56,9 +73,22 @@ func hasQQPlugin(cfg *config.Config) bool {
 }
 
 func qqPluginInstallPath(cfg *config.Config) string {
+	if ocConfig, err := cfg.ReadOpenClawJSON(); err == nil && ocConfig != nil {
+		if plugins, ok := ocConfig["plugins"].(map[string]interface{}); ok && plugins != nil {
+			if installs, ok := plugins["installs"].(map[string]interface{}); ok && installs != nil {
+				if qqInstall, ok := installs["qq"].(map[string]interface{}); ok && qqInstall != nil {
+					if installPath := strings.TrimSpace(fmt.Sprint(qqInstall["installPath"])); installPath != "" {
+						return installPath
+					}
+				}
+			}
+		}
+	}
 	for _, candidate := range []string{
 		filepath.Join(cfg.OpenClawDir, "extensions", "qq"),
 		filepath.Join(filepath.Dir(cfg.OpenClawDir), "extensions", "qq"),
+		filepath.Join(cfg.BundledOpenClawAppDir(), "extensions", "qq"),
+		cfg.BundledPluginDir("qq"),
 	} {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
@@ -292,11 +322,25 @@ func GetSoftwareList(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var list []SoftwareInfo
 
+		if cfg.IsLiteEdition() {
+			ocVer := detectOpenClawVersion(cfg)
+			if strings.TrimSpace(ocVer) == "" || ocVer == "installed" {
+				ocVer = "2026.2.26"
+			}
+			list = append(list, SoftwareInfo{
+				ID: "openclaw", Name: "OpenClaw", Description: "Lite 内嵌 AI 助手核心引擎",
+				Version: ocVer, Installed: true, Installable: false,
+				Status: boolStatus(true), Category: "service", Icon: "brain",
+			})
+			c.JSON(http.StatusOK, gin.H{"ok": true, "software": list, "platform": runtime.GOOS})
+			return
+		}
+
 		// Node.js
 		nodeVer := detectCmd("node", "--version")
 		list = append(list, SoftwareInfo{
 			ID: "nodejs", Name: "Node.js", Description: "JavaScript 运行时",
-			Version: nodeVer, Installed: nodeVer != "", Installable: true,
+			Version: nodeVer, Installed: nodeVer != "", Installable: !cfg.IsLiteEdition(),
 			Status: boolStatus(nodeVer != ""), Category: "runtime", Icon: "terminal",
 		})
 
@@ -320,7 +364,7 @@ func GetSoftwareList(cfg *config.Config) gin.HandlerFunc {
 		gitVer := detectCmd("git", "--version")
 		list = append(list, SoftwareInfo{
 			ID: "git", Name: "Git", Description: "版本控制系统",
-			Version: gitVer, Installed: gitVer != "", Installable: true,
+			Version: gitVer, Installed: gitVer != "", Installable: !cfg.IsLiteEdition(),
 			Status: boolStatus(gitVer != ""), Category: "runtime", Icon: "git-branch",
 		})
 
@@ -336,7 +380,7 @@ func GetSoftwareList(cfg *config.Config) gin.HandlerFunc {
 		ocVer := detectOpenClawVersion(cfg)
 		list = append(list, SoftwareInfo{
 			ID: "openclaw", Name: "OpenClaw", Description: "AI 助手核心引擎",
-			Version: ocVer, Installed: ocVer != "", Installable: true,
+			Version: ocVer, Installed: ocVer != "", Installable: !cfg.IsLiteEdition(),
 			Status: boolStatus(ocVer != ""), Category: "service", Icon: "brain",
 		})
 
@@ -876,6 +920,10 @@ func readVersionFromPackageJSON(path string) string {
 // DetectOpenClawInstances 检测所有 OpenClaw 安装实例
 func DetectOpenClawInstances(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if cfg.IsLiteEdition() {
+			c.JSON(http.StatusOK, gin.H{"ok": true, "instances": []OpenClawInstance{}})
+			return
+		}
 		var instances []OpenClawInstance
 
 		// 1. npm global install
@@ -991,6 +1039,14 @@ func InstallSoftware(cfg *config.Config, tm *taskman.Manager) gin.HandlerFunc {
 		if err := c.ShouldBindJSON(&req); err != nil || req.Software == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "software required"})
 			return
+		}
+
+		if cfg.IsLiteEdition() {
+			switch req.Software {
+			case "openclaw", "nodejs", "git":
+				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "Lite 版已内置 OpenClaw 运行环境，不支持安装或切换此组件"})
+				return
+			}
 		}
 
 		if tm.HasRunningTask("install_" + req.Software) {
@@ -1352,7 +1408,7 @@ echo "✅ $(python3 --version) 安装完成"
 			}
 			taskName = "安装 OpenClaw"
 			if runtime.GOOS == "windows" {
-				script = `
+				script = fmt.Sprintf(`
 $ErrorActionPreference = "Continue"
 Write-Output "📦 安装 OpenClaw..."
 
@@ -1507,6 +1563,14 @@ if (-not $nodeCheck) {
 Write-Output "📝 配置 npm 镜像源..."
 npm config set registry https://registry.npmmirror.com 2>$null
 
+# Some OpenClaw dependencies still resolve GitHub repos via git@github.com/ssh URLs.
+# Force npm/git to rewrite them to anonymous https URLs during installation.
+$env:GIT_CONFIG_COUNT = "2"
+$env:GIT_CONFIG_KEY_0 = "url.https://github.com/.insteadof"
+$env:GIT_CONFIG_VALUE_0 = "ssh://git@github.com/"
+$env:GIT_CONFIG_KEY_1 = "url.https://github.com/.insteadOf"
+$env:GIT_CONFIG_VALUE_1 = "git@github.com:"
+
 # Ensure npm global prefix is set to user-accessible path
 $npmPrefix = npm config get prefix 2>$null
 Write-Output "📁 npm 全局安装目录: $npmPrefix"
@@ -1522,16 +1586,16 @@ if (-not (Test-Path $npmModules)) {
   New-Item -ItemType Directory -Path $npmModules -Force | Out-Null
 }
 
-Write-Output "📥 正在通过 npm 安装 OpenClaw..."
-$npmExit = Invoke-NativeStep { npm install -g openclaw@latest --registry=https://registry.npmmirror.com --no-fund --no-audit }
+Write-Output "📥 正在通过 npm 安装 OpenClaw %s..."
+$npmExit = Invoke-NativeStep { npm install -g openclaw@%s --registry=https://registry.npmmirror.com --no-fund --no-audit }
 $openclawCmd = Join-Path $npmPrefix "openclaw.cmd"
 if ($npmExit -ne 0 -and -not (Test-Path $openclawCmd)) {
   Write-Output "⚠️ 首次安装失败 (exit code: $npmExit)，正在重试..."
   Invoke-NativeStep { npm cache verify } | Out-Null
-  $npmExit = Invoke-NativeStep { npm install -g openclaw@latest --registry=https://registry.npmmirror.com --force --no-fund --no-audit }
+  $npmExit = Invoke-NativeStep { npm install -g openclaw@%s --registry=https://registry.npmmirror.com --force --no-fund --no-audit }
 }
 if ($npmExit -ne 0 -and -not (Test-Path $openclawCmd)) {
-  Write-Output "❌ OpenClaw 安装失败，请检查网络连接或手动运行: npm install -g openclaw@latest"
+  Write-Output "❌ OpenClaw 安装失败，请检查网络连接或手动运行: npm install -g openclaw@%s"
   exit 1
 }
 if ($npmExit -ne 0 -and (Test-Path $openclawCmd)) {
@@ -1610,9 +1674,9 @@ if (Test-Path $openclawCmd) {
 }
 Write-Output "ℹ️ 初次安装后，网关状态同步可能需要 10-30 秒"
 Write-Output "✅ 全部完成"
-`
+`, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion)
 			} else {
-				script = `
+				script = fmt.Sprintf(`
 set -e
 echo "📦 安装 OpenClaw..."
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
@@ -1736,9 +1800,50 @@ echo "✅ Node.js $(node --version) ready"
 # 2. Ensure npm mirror is set
 npm config set registry https://registry.npmmirror.com 2>/dev/null || true
 
+# Some OpenClaw dependencies still resolve GitHub repos via git@github.com/ssh URLs.
+# Force npm/git to rewrite them to anonymous https URLs during installation.
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0="url.https://github.com/.insteadof"
+export GIT_CONFIG_VALUE_0="ssh://git@github.com/"
+export GIT_CONFIG_KEY_1="url.https://github.com/.insteadOf"
+export GIT_CONFIG_VALUE_1="git@github.com:"
+
 # 3. Install OpenClaw
-echo "📥 正在通过 npm 安装 OpenClaw..."
-npm install -g openclaw@latest --registry=https://registry.npmmirror.com
+install_openclaw_offline() {
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    *) return 1 ;;
+  esac
+
+  local base_url="http://39.102.53.188:16198/clawpanel/bin/openclaw"
+  local pkg="openclaw-%s-linux-${arch}-prefix.tar.gz"
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+  local pkg_path="$tmp_dir/$pkg"
+
+  echo "📦 尝试从加速服务器安装 OpenClaw %s 离线包..."
+  if ! curl -fsSL --max-time 600 "$base_url/$pkg" -o "$pkg_path"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  mkdir -p /usr/local/lib
+  rm -rf "/usr/local/lib/openclaw-%s"
+  mkdir -p "/usr/local/lib/openclaw-%s"
+  tar -xzf "$pkg_path" -C "/usr/local/lib/openclaw-%s"
+  ln -sfn "/usr/local/lib/openclaw-%s/node_modules/.bin/openclaw" /usr/local/bin/openclaw
+  rm -rf "$tmp_dir"
+  hash -r
+  return 0
+}
+
+if install_openclaw_offline; then
+  echo "✅ OpenClaw $(openclaw --version 2>/dev/null || echo '已安装') 安装完成 (离线包)"
+else
+  echo "📥 正在通过 npm 安装 OpenClaw %s..."
+  npm install -g openclaw@%s --registry=https://registry.npmmirror.com
+fi
 echo "✅ OpenClaw $(openclaw --version 2>/dev/null || echo '已安装') 安装完成"
 
 # 4. Initialize config
@@ -1746,7 +1851,7 @@ echo "📝 初始化配置..."
 openclaw init 2>/dev/null || true
 
 echo "✅ 全部完成"
-`
+`, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion, pinnedOpenClawVersion)
 			}
 		case "napcat":
 			taskName = "安装 NapCat (QQ个人号)"
@@ -1815,11 +1920,33 @@ func getSudoPass(cfg *config.Config) string {
 func buildNapCatInstallScript(cfg *config.Config) string {
 	_, wsToken, _ := cfg.ReadQQChannelState()
 	wsTokenB64 := base64.StdEncoding.EncodeToString([]byte(wsToken))
+	qqPluginDir := qqPluginInstallPath(cfg)
 
 	return fmt.Sprintf(`
 set -e
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 echo "📦 安装 NapCat (QQ个人号) Docker 容器..."
+
+QQ_PLUGIN_DIR=%q
+if [ ! -d "$QQ_PLUGIN_DIR" ]; then
+  echo "📥 安装 QQ (OneBot11) 通道插件..."
+  mkdir -p "$(dirname "$QQ_PLUGIN_DIR")"
+  QQ_TGZ="$(mktemp /tmp/qq-plugin.XXXXXX.tgz)"
+  if curl -fsSL --max-time 60 "http://39.102.53.188:16198/clawpanel/bin/qq-plugin.tgz" -o "$QQ_TGZ"; then
+    tar -xzf "$QQ_TGZ" -C "$(dirname "$QQ_PLUGIN_DIR")"
+    chown -R root:root "$QQ_PLUGIN_DIR" 2>/dev/null || true
+    rm -f "$QQ_TGZ"
+  else
+    rm -f "$QQ_TGZ"
+    echo "❌ QQ 个人号插件安装失败，无法继续安装 NapCat"
+    exit 1
+  fi
+fi
+
+if [ ! -d "$QQ_PLUGIN_DIR" ]; then
+  echo "❌ QQ 个人号插件未安装，无法继续安装 NapCat"
+  exit 1
+fi
 
 # Auto-install Docker if missing
 if ! command -v docker &>/dev/null; then
@@ -2042,7 +2169,7 @@ fi
 
 echo "✅ NapCat (QQ个人号) 安装完成"
 echo "📝 请在通道管理中扫码登录 QQ"
-`, cfg.OpenClawDir, cfg.OpenClawWork, wsTokenB64)
+`, qqPluginDir, cfg.OpenClawDir, cfg.OpenClawWork, wsTokenB64)
 }
 
 // getNapCatShellDir returns the NapCat Shell installation directory on Windows, or "" if not found

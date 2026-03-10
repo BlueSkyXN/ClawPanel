@@ -3,14 +3,23 @@ name: Release Build
 
 on:
   push:
-    # 只有 v* tag 才会自动走正式发布链路。
+    # 按发行形态分别使用独立 tag 前缀。
     tags:
-      - 'v*'
+      - 'pro-v*'
+      - 'lite-v*'
   workflow_dispatch:
-    # 支持手动触发，并可显式指定版本号（不带前导 v）。
+    # 支持手动触发，并可显式指定版本号与发行形态。
     inputs:
+      edition:
+        description: 'Edition (pro or lite)'
+        required: true
+        default: 'pro'
+        type: choice
+        options:
+          - pro
+          - lite
       version:
-        description: 'Version without leading v (optional)'
+        description: 'Version without leading prefix (optional)'
         required: false
         type: string
 
@@ -28,7 +37,11 @@ jobs:
     name: Prepare Version
     runs-on: ubuntu-24.04
     outputs:
+      edition: ${{ steps.version.outputs.edition }}
       version: ${{ steps.version.outputs.version }}
+      app_name: ${{ steps.version.outputs.app_name }}
+      release_title: ${{ steps.version.outputs.release_title }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
 
     steps:
       - name: Checkout
@@ -37,16 +50,32 @@ jobs:
       - name: Resolve version
         id: version
         env:
+          INPUT_EDITION: ${{ github.event.inputs.edition }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
+          EDITION=""
+          if [[ "${GITHUB_REF}" == refs/tags/pro-v* ]]; then
+            EDITION="pro"
+            VERSION="${GITHUB_REF_NAME#pro-v}"
+          elif [[ "${GITHUB_REF}" == refs/tags/lite-v* ]]; then
+            EDITION="lite"
+            VERSION="${GITHUB_REF_NAME#lite-v}"
+          elif [[ -n "${INPUT_EDITION:-}" ]]; then
+            EDITION="${INPUT_EDITION}"
+            VERSION="${INPUT_VERSION#v}"
           elif [[ -n "${INPUT_VERSION:-}" ]]; then
+            EDITION="pro"
             VERSION="${INPUT_VERSION#v}"
           else
+            EDITION="pro"
             VERSION="$(awk -F '[:= ]+' '/^VERSION[[:space:]]*:=[[:space:]]*/ { print $2; exit }' Makefile)"
+          fi
+
+          if [[ "${EDITION}" != "pro" && "${EDITION}" != "lite" ]]; then
+            echo "Invalid edition: ${EDITION}" >&2
+            exit 1
           fi
 
           if [[ -z "${VERSION}" ]]; then
@@ -54,8 +83,21 @@ jobs:
             exit 1
           fi
 
-          echo "Resolved version: ${VERSION}"
+          APP_NAME="clawpanel"
+          RELEASE_TITLE="ClawPanel Pro v${VERSION}"
+          TAG_NAME="pro-v${VERSION}"
+          if [[ "${EDITION}" == "lite" ]]; then
+            APP_NAME="clawpanel-lite"
+            RELEASE_TITLE="ClawPanel Lite v${VERSION}"
+            TAG_NAME="lite-v${VERSION}"
+          fi
+
+          echo "Resolved edition=${EDITION} version=${VERSION}"
+          echo "edition=${EDITION}" >> "${GITHUB_OUTPUT}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "app_name=${APP_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "release_title=${RELEASE_TITLE}" >> "${GITHUB_OUTPUT}"
+          echo "tag_name=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
 
   # 前端只构建一次，后续所有平台二进制都复用这份 dist artifact。
   build-frontend:
@@ -154,17 +196,19 @@ jobs:
           Copy-Item -Path "web/dist/*" -Destination "cmd/clawpanel/frontend/dist" -Recurse -Force
 
       - name: Build binary
+        if: needs.prepare.outputs.edition != 'lite' || (matrix.os == 'linux' && matrix.arch == 'amd64')
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
-        run: go build -trimpath -ldflags "-s -w -X main.Version=${{ needs.prepare.outputs.version }}" -o "clawpanel-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" ./cmd/clawpanel/
+        run: go build -trimpath -ldflags "-s -w -X github.com/zhaoxinyi02/ClawPanel/internal/buildinfo.Version=${{ needs.prepare.outputs.version }} -X github.com/zhaoxinyi02/ClawPanel/internal/buildinfo.Edition=${{ needs.prepare.outputs.edition }}" -o "${{ needs.prepare.outputs.app_name }}-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" ./cmd/clawpanel/
 
       - name: Upload binary artifact
+        if: needs.prepare.outputs.edition != 'lite' || (matrix.os == 'linux' && matrix.arch == 'amd64')
         uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.os }}-${{ matrix.arch }}
-          path: clawpanel-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          path: ${{ needs.prepare.outputs.app_name }}-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
           retention-days: 30
 
   # Windows 安装包复用前面生成好的 Windows 可执行文件，并在 Windows runner 上原生构建。
@@ -175,21 +219,25 @@ jobs:
 
     steps:
       - name: Checkout
+        if: needs.prepare.outputs.edition == 'pro'
         uses: actions/checkout@v6
 
       - name: Setup Go
+        if: needs.prepare.outputs.edition == 'pro'
         uses: actions/setup-go@v6
         with:
           go-version-file: installer/go.mod
           cache: true
 
       - name: Download windows binary artifact
+        if: needs.prepare.outputs.edition == 'pro'
         uses: actions/download-artifact@v8
         with:
           name: binary-windows-amd64
           path: dist
 
       - name: Build installer
+        if: needs.prepare.outputs.edition == 'pro'
         shell: pwsh
         working-directory: installer
         env:
@@ -202,6 +250,7 @@ jobs:
           Remove-Item "payload/clawpanel.exe" -Force
 
       - name: Upload installer artifact
+        if: needs.prepare.outputs.edition == 'pro'
         uses: actions/upload-artifact@v7
         with:
           name: windows-installer
@@ -223,6 +272,7 @@ jobs:
           merge-multiple: true
 
       - name: Download installer artifact
+        if: needs.prepare.outputs.edition == 'pro'
         uses: actions/download-artifact@v8
         with:
           name: windows-installer
@@ -244,7 +294,7 @@ jobs:
   # 只有真正的 tag 发布才会把资产上传到 GitHub Release 页面。
   publish-release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/pro-v') || startsWith(github.ref, 'refs/tags/lite-v')
     needs: [prepare, bundle]
     runs-on: ubuntu-24.04
 
@@ -258,9 +308,9 @@ jobs:
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.prepare.outputs.version }}
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
           target_commitish: ${{ github.sha }}
-          name: ClawPanel v${{ needs.prepare.outputs.version }}
+          name: ${{ needs.prepare.outputs.release_title }}
           generate_release_notes: true
           files: |
             release/*

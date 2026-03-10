@@ -1,0 +1,14 @@
+{
+  "latest_version": "5.2.7",
+  "release_time": "2026-03-09T08:57:00+08:00",
+  "release_note": "## ClawPanel Pro v5.2.7\n\n- 保持当前纯面板形态\n- 继续支持一键安装 OpenClaw、外部实例接管与自由插件安装\n- QQ 通道稳定性与插件安装体验延续当前正式版行为",
+  "download_urls": {
+    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.7-linux-amd64",
+    "linux_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.7-linux-arm64",
+    "darwin_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.7-darwin-amd64",
+    "darwin_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.7-darwin-arm64",
+    "windows_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.7-windows-amd64.exe"
+  },
+  "major_change": false,
+  "change_warning": ""
+}

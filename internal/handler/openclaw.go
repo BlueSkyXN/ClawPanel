@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,9 @@ func normalizeProviderAPIs(providers map[string]interface{}) {
 		if api, ok := p["api"].(string); ok {
 			p["api"] = normalizeProviderAPI(api)
 		}
+		if apiKey, ok := p["apiKey"].(string); ok {
+			p["apiKey"] = sanitizeProviderAPIKey(apiKey)
+		}
 		modelList, _ := p["models"].([]interface{})
 		for _, m := range modelList {
 			model, ok := m.(map[string]interface{})
@@ -48,6 +52,26 @@ func normalizeProviderAPIs(providers map[string]interface{}) {
 			}
 		}
 	}
+}
+
+var knownAPIKeyPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`nvapi-[A-Za-z0-9._\-]+`),
+	regexp.MustCompile(`sk-[A-Za-z0-9._\-]+`),
+	regexp.MustCompile(`sess-[A-Za-z0-9._\-]+`),
+	regexp.MustCompile(`AIza[0-9A-Za-z_\-]+`),
+}
+
+func sanitizeProviderAPIKey(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	for _, pattern := range knownAPIKeyPatterns {
+		if match := pattern.FindString(raw); match != "" {
+			return match
+		}
+	}
+	return raw
 }
 
 func preserveMissingMapFields(dst, src map[string]interface{}) {
@@ -286,6 +310,9 @@ func SaveChannel(cfg *config.Config, procMgr *process.Manager) gin.HandlerFunc {
 		if id == "qq" {
 			body = normalizeQQChannelConfig(body)
 		}
+		if id == "qqbot" {
+			body = normalizeQQBotChannelConfig(body)
+		}
 		if id == "telegram" {
 			body = normalizeTelegramChannelConfig(body)
 		}
@@ -294,6 +321,9 @@ func SaveChannel(cfg *config.Config, procMgr *process.Manager) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 				return
 			}
+		}
+		if id == "wecom" {
+			body = normalizeWeComChannelConfig(body)
 		}
 		channels[id] = body
 		ocConfig["channels"] = channels
@@ -377,6 +407,29 @@ func normalizeQQChannelConfig(body map[string]interface{}) map[string]interface{
 		delete(body, "autoApproveGroup")
 	}
 
+	return body
+}
+
+func normalizeQQBotChannelConfig(body map[string]interface{}) map[string]interface{} {
+	if body == nil {
+		return map[string]interface{}{}
+	}
+	if appID := strings.TrimSpace(toString(body["appId"])); appID != "" {
+		body["appId"] = appID
+	} else {
+		delete(body, "appId")
+	}
+	secret := strings.TrimSpace(toString(body["clientSecret"]))
+	if secret == "" {
+		secret = strings.TrimSpace(toString(body["appSecret"]))
+	}
+	if secret != "" {
+		body["clientSecret"] = secret
+	} else {
+		delete(body, "clientSecret")
+	}
+	delete(body, "appSecret")
+	delete(body, "token")
 	return body
 }
 
@@ -651,6 +704,25 @@ func normalizeFeishuChannelConfigInPlace(body map[string]interface{}) error {
 		delete(body, "accounts")
 	}
 
+	hasTopLevelCreds := strings.TrimSpace(toString(body["appId"])) != "" && strings.TrimSpace(toString(body["appSecret"])) != ""
+	hasRunnableAccount := false
+	for _, rawEntry := range normalizedAccounts {
+		entry, _ := rawEntry.(map[string]interface{})
+		if hasFeishuRunnableCredentials(entry) {
+			hasRunnableAccount = true
+			break
+		}
+	}
+	if dmPolicy == "" && (hasTopLevelCreds || hasRunnableAccount) {
+		body["dmPolicy"] = "open"
+	}
+	if strings.EqualFold(strings.TrimSpace(toString(body["dmPolicy"])), "open") {
+		body["allowFrom"] = ensureWildcardAllowList(body["allowFrom"])
+	}
+	if groupPolicy == "" && (hasTopLevelCreds || hasRunnableAccount) {
+		body["groupPolicy"] = "open"
+	}
+
 	return nil
 }
 
@@ -659,6 +731,32 @@ func normalizeFeishuChannelConfig(body map[string]interface{}) map[string]interf
 		return map[string]interface{}{}
 	}
 	_ = normalizeFeishuChannelConfigInPlace(body)
+	return body
+}
+
+func normalizeWeComChannelConfig(body map[string]interface{}) map[string]interface{} {
+	if body == nil {
+		return map[string]interface{}{}
+	}
+	for _, key := range []string{"botId", "secret", "websocketUrl", "name"} {
+		if trimmed := strings.TrimSpace(toString(body[key])); trimmed != "" {
+			body[key] = trimmed
+		} else {
+			delete(body, key)
+		}
+	}
+	dmPolicy := strings.TrimSpace(toString(body["dmPolicy"]))
+	if dmPolicy == "" && strings.TrimSpace(toString(body["botId"])) != "" && strings.TrimSpace(toString(body["secret"])) != "" {
+		dmPolicy = "open"
+	}
+	if dmPolicy != "" {
+		body["dmPolicy"] = dmPolicy
+	} else {
+		delete(body, "dmPolicy")
+	}
+	if strings.EqualFold(dmPolicy, "open") {
+		body["allowFrom"] = ensureWildcardAllowList(body["allowFrom"])
+	}
 	return body
 }
 

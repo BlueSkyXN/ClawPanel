@@ -17,13 +17,14 @@ REPO="zhaoxinyi02/ClawPanel"
 PORT="19527"
 ACCEL_BASE="http://39.102.53.188:16198/clawpanel"
 DEFAULT_VERSION="5.2.2"
+UPDATE_META="${UPDATE_META:-update-pro.json}"
 
 # ==================== 自动获取最新版本 ====================
 get_latest_version() {
     local ver=""
     local tag=""
     if command -v curl &>/dev/null; then
-        tag=$(curl -fsSL "${ACCEL_BASE}/update.json" 2>/dev/null | \
+        tag=$(curl -fsSL "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | \
               awk -F'"' '/"latest_version"/ {print $4; exit}')
         if [ -n "$tag" ]; then
             echo "${tag:-$DEFAULT_VERSION}"
@@ -32,7 +33,7 @@ get_latest_version() {
         tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | \
               awk -F'"' '/"tag_name"/ {print $4; exit}')
     elif command -v wget &>/dev/null; then
-        tag=$(wget -qO- "${ACCEL_BASE}/update.json" 2>/dev/null | \
+        tag=$(wget -qO- "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | \
               awk -F'"' '/"latest_version"/ {print $4; exit}')
         if [ -n "$tag" ]; then
             echo "${tag:-$DEFAULT_VERSION}"

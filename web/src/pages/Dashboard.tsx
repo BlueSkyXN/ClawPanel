@@ -43,6 +43,7 @@ export default function Dashboard({ ws }: DashboardProps) {
   const nc = status?.napcat || {};
   const wc = status?.wechat || {};
   const oc = status?.openclaw || {};
+  const isLiteEdition = oc.edition === 'lite' || status?.panel?.edition === 'lite';
   const gateway = status?.gateway || {};
   const proc = status?.process || {};
   const adm = status?.admin || {};
@@ -122,17 +123,23 @@ export default function Dashboard({ ws }: DashboardProps) {
             <Brain size={28} className="text-amber-600 dark:text-amber-400" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white">OpenClaw 尚未安装</h3>
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">{isLiteEdition ? 'Lite 内置运行环境异常' : 'OpenClaw 尚未安装'}</h3>
             <p className="text-sm text-gray-500 mt-1 max-w-md mx-auto">
-              ClawPanel 需要 OpenClaw 才能正常工作。安装后即可配置模型、管理技能和连接通道。
+              {isLiteEdition
+                ? '当前 Lite 版本应自带 OpenClaw。若这里仍显示未就绪，请检查 Lite runtime 是否完整解压，或重新安装 Lite 包。'
+                : 'ClawPanel 需要 OpenClaw AI 引擎才能正常工作。安装后即可配置模型、管理技能和连接通道。'}
             </p>
           </div>
-          <button onClick={handleInstallOpenClaw} disabled={installingOC}
-            className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none'}`}>
-            {installingOC ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            {installingOC ? '安装中...' : '一键安装 OpenClaw'}
-          </button>
-          <p className="text-[11px] text-gray-400">安装进度可在右上角铃铛中的消息中心实时查看</p>
+          {!isLiteEdition && (
+            <>
+              <button onClick={handleInstallOpenClaw} disabled={installingOC}
+                className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none'}`}>
+                {installingOC ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                {installingOC ? '安装中...' : '一键安装 OpenClaw'}
+              </button>
+              <p className="text-[11px] text-gray-400">安装进度可在右上角铃铛中的消息中心实时查看</p>
+            </>
+          )}
         </div>
       )}
 

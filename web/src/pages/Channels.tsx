@@ -333,7 +333,7 @@ const CHANNEL_DEFS: ChannelDef[] = [
   { id: 'telegram', label: 'Telegram', description: 'Telegram Bot 通道插件', type: 'plugin',
     configFields: [
       { key: 'botToken', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF...', help: '从 @BotFather 获取的 Telegram Bot Token' },
-      { key: 'dmPolicy', label: '私聊准入策略', type: 'select', options: ['pairing', 'open', 'allowlist'], help: 'pairing = 首次私聊需配对批准；open = 所有私聊直接可用；allowlist = 仅白名单', defaultValue: 'pairing' },
+      { key: 'dmPolicy', label: '私聊准入策略', type: 'select', options: ['pairing', 'open', 'allowlist'], help: 'pairing = 首次私聊需配对批准；open = 所有私聊直接可用；allowlist = 仅白名单', defaultValue: 'open' },
       { key: 'allowFrom', label: '私聊白名单', type: 'textarea', rows: 3, placeholder: '123456789, 987654321', help: '仅 dmPolicy=allowlist 时生效；支持英文逗号、中文逗号或换行分隔' },
       { key: 'groupPolicy', label: '群聊准入策略', type: 'select', options: ['allowlist', 'open'], help: 'allowlist = 仅允许白名单中的发送者；open = 群内任何人都可触发（通常仍需提及）', defaultValue: 'allowlist' },
       { key: 'groupAllowFrom', label: '群聊白名单', type: 'textarea', rows: 3, placeholder: '123456789, 987654321', help: '仅 groupPolicy=allowlist 时生效；支持英文逗号、中文逗号或换行分隔' },
@@ -377,7 +377,7 @@ const CHANNEL_DEFS: ChannelDef[] = [
       { key: 'domain', label: '站点域（Domain）', type: 'select', options: ['feishu', 'lark'], help: '国际版 Lark 场景可切到 lark；不确定时保持 feishu', defaultValue: 'feishu', section: 'access' },
       { key: 'requireMention', label: '群聊是否必须 @', type: 'select', options: ['true', 'false'], help: '仅接受 true / false；open 属于 groupPolicy，不属于本字段', defaultValue: true, section: 'access' },
       { key: 'groupPolicy', label: '群组准入策略', type: 'select', options: ['open', 'allowlist', 'closed'], help: 'open = 所有群可用；allowlist = 仅白名单；closed = 禁止群聊', defaultValue: 'open', section: 'access' },
-      { key: 'dmPolicy', label: '私聊准入策略', type: 'select', options: ['pairing', 'open', 'allowlist'], help: 'pairing = 需先配对；open = 所有私聊可用；allowlist = 仅白名单', defaultValue: 'pairing', section: 'access' },
+      { key: 'dmPolicy', label: '私聊准入策略', type: 'select', options: ['pairing', 'open', 'allowlist'], help: 'pairing = 需先配对；open = 所有私聊可用；allowlist = 仅白名单', defaultValue: 'open', section: 'access' },
       { key: 'groupAllowFrom', label: '群聊白名单', type: 'textarea', placeholder: 'oc_xxx, oc_yyy', help: '支持英文逗号、中文逗号或换行分隔；仅 groupPolicy=allowlist 时生效，保存时会写成数组', section: 'access', rows: 3 },
       { key: 'streaming', label: '流式卡片输出', type: 'toggle', help: '仅飞书官方版支持，开启后回复以流式卡片形式呈现', section: 'conversation' },
       { key: 'threadSession', label: '话题独立上下文', type: 'toggle', help: '仅飞书官方版支持，每个话题拥有独立会话并可并行', section: 'conversation' },
@@ -393,20 +393,18 @@ const CHANNEL_DEFS: ChannelDef[] = [
     ] },
   { id: 'qqbot', label: 'QQ 官方机器人', description: 'QQ开放平台官方Bot API (插件)', type: 'plugin',
     configFields: [
-      { key: 'appId', label: 'App ID', type: 'text', help: 'QQ 开放平台应用 ID' },
-      { key: 'token', label: 'Token', type: 'password', help: 'QQ 官方机器人 Token' },
-      { key: 'appSecret', label: 'App Secret', type: 'password', help: 'QQ 官方机器人 App Secret' },
+      { key: 'appId', label: 'App ID', type: 'text', help: 'QQ 开放平台应用 ID（新版插件只需填写 appId 和 appSecret）' },
+      { key: 'clientSecret', label: 'App Secret', type: 'password', help: 'QQ 官方机器人 App Secret' },
     ] },
   { id: 'dingtalk', label: '钉钉', description: '钉钉机器人 (插件)', type: 'plugin',
     configFields: [
       { key: 'clientId', label: 'Client ID', type: 'text', help: '钉钉应用 Client ID' },
       { key: 'clientSecret', label: 'Client Secret', type: 'password', help: '钉钉应用 Client Secret' },
     ] },
-  { id: 'wecom', label: '企业微信（智能机器人）', description: '企业微信智能机器人，被动回复、群聊友好', type: 'plugin',
+  { id: 'wecom', label: '企业微信（智能机器人）', description: '企业微信智能机器人，长连接模式，仅需 Bot ID 与 Secret', type: 'plugin',
     configFields: [
-      { key: 'webhookPath', label: 'Webhook Path', type: 'text', placeholder: '/wecom', help: '保持默认一般即可' },
-      { key: 'token', label: 'Token', type: 'password', help: '企业微信回调配置中的 Token' },
-      { key: 'encodingAESKey', label: 'EncodingAESKey', type: 'password', help: '43 位字符' },
+      { key: 'botId', label: 'Bot ID', type: 'text', help: '企业微信智能机器人 Bot ID' },
+      { key: 'secret', label: 'Secret', type: 'password', help: '企业微信智能机器人 Secret' },
     ] },
   { id: 'wecom-app', label: '企业微信（自建应用）', description: '企业微信自建应用，支持更完整 API 与微信入口', type: 'plugin',
     configFields: [
@@ -454,9 +452,9 @@ const CHANNEL_REQUIRED_FIELDS: Record<string, string[]> = {
   googlechat: ['serviceAccountKey', 'webhookUrl'],
   bluebubbles: ['serverUrl', 'password'],
   feishu: ['appId', 'appSecret'],
-  qqbot: ['appId', 'token', 'appSecret'],
+  qqbot: ['appId', 'clientSecret'],
   dingtalk: ['clientId', 'clientSecret'],
-  wecom: ['token', 'encodingAESKey'],
+  wecom: ['botId', 'secret'],
   'wecom-app': ['token', 'encodingAESKey', 'corpId', 'corpSecret', 'agentId'],
   msteams: ['appId', 'appPassword'],
   mattermost: ['url', 'token'],
@@ -481,6 +479,10 @@ function getFeishuPluginEntryId(ocConfig: any): string {
 
 function isQQPluginInstalled(installedPlugins: any[]) {
   return installedPlugins.some((p: any) => p.id === 'qq');
+}
+
+function isQQActuallyInstalled(installedPlugins: any[], qqChannelState: any) {
+  return !!(qqChannelState?.pluginInstalled || isQQPluginInstalled(installedPlugins));
 }
 // Determine channel status: 'enabled' (green), 'configured' (red/orange), 'unconfigured' (gray)
 function getChannelStatus(ch: ChannelDef, ocConfig: any): 'enabled' | 'configured' | 'unconfigured' {
@@ -553,6 +555,7 @@ export default function Channels() {
   const [restarting, setRestarting] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<any[]>([]);
   const [installingChannelPlugin, setInstallingChannelPlugin] = useState<string | null>(null);
+  const [qqChannelState, setQQChannelState] = useState<any>(null);
   const [channelDrafts, setChannelDrafts] = useState<Record<string, any>>({});
   const [channelFieldTextDrafts, setChannelFieldTextDrafts] = useState<Record<string, string>>({});
   const [feishuAdvancedAccounts, setFeishuAdvancedAccounts] = useState(false);
@@ -636,7 +639,31 @@ export default function Channels() {
       if (r.ok) setMsg(`✅ ${id} 安装任务已创建，请在消息中心查看进度`);
       else setMsg(`❌ ${r.error || '安装失败'}`);
     } catch { setMsg('❌ 安装请求失败'); }
-    finally { setInstallingSw(null); setTimeout(() => { setMsg(''); loadSoftware(); }, 5000); }
+    finally { setInstallingSw(null); setTimeout(() => { setMsg(''); loadSoftware(); loadInstalledPlugins(); loadQQChannelState(); reload(); }, 5000); }
+  };
+
+  const handleSetupQQChannel = async () => {
+    setInstallingSw('napcat');
+    try {
+      const r = await api.setupQQChannel();
+      if (r.ok) {
+        setMsg('✅ QQ (NapCat) 安装任务已创建，请在消息中心查看进度');
+        setTimeout(() => {
+          setMsg('');
+          loadSoftware();
+          loadInstalledPlugins();
+          loadQQChannelState();
+          reload();
+          loadNapcatStatus();
+        }, 5000);
+      } else {
+        setMsg(`❌ ${r.error || '安装失败'}`);
+      }
+    } catch {
+      setMsg('❌ 安装请求失败');
+    } finally {
+      setInstallingSw(null);
+    }
   };
 
   const handleInstallChannelPlugin = async (pluginId: string) => {
@@ -648,6 +675,7 @@ export default function Channels() {
         setTimeout(() => {
           setMsg('');
           loadInstalledPlugins();
+          loadQQChannelState();
           reload();
         }, 5000);
       } else {
@@ -669,6 +697,10 @@ export default function Channels() {
     api.getInstalledPlugins().then((r: any) => { if (r.ok) setInstalledPlugins(r.plugins || []); }).catch(() => {});
   };
 
+  const loadQQChannelState = () => {
+    api.getQQChannelState().then((r: any) => { if (r.ok) setQQChannelState(r.state || null); }).catch(() => {});
+  };
+
   const loadFeishuDmDiagnosis = useCallback(async () => {
     setLoadingFeishuDmDiagnosis(true);
     try {
@@ -687,6 +719,9 @@ export default function Channels() {
     // 飞书特殊处理：任一版本已安装即视为已安装
     if (channelId === 'feishu') {
       return installedPlugins.some((p: any) => p.id === 'feishu' || p.id === 'feishu-openclaw-plugin');
+    }
+    if (channelId === 'wecom') {
+      return installedPlugins.some((p: any) => p.id === 'wecom' || p.id === 'wecom-openclaw-plugin');
     }
     // Check if plugin extension is installed (in extensions dir or plugins.installs)
     return installedPlugins.some((p: any) => p.id === channelId);
@@ -726,7 +761,7 @@ export default function Channels() {
     api.getRequests().then(r => { if (r.ok) setRequests(r.requests || []); });
   };
 
-  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); loadInstalledPlugins(); }, []);
+  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); loadInstalledPlugins(); loadQQChannelState(); }, []);
   // 自动选择第一个已启用的渠道（而非硬编码 QQ）
   useEffect(() => {
     if (selectedChannel) return; // 用户已手动选择
@@ -773,6 +808,13 @@ export default function Channels() {
   const ocPlugins = ocConfig?.plugins?.entries || {};
   const getEffectiveChannelConfig = (channelId: string) => {
     if (isPlainObject(channelDrafts[channelId])) return channelDrafts[channelId];
+    if (channelId === 'qqbot' && isPlainObject(ocChannels[channelId])) {
+      const cfg = { ...ocChannels[channelId] } as any;
+      if (!String(cfg.clientSecret || '').trim() && String(cfg.appSecret || '').trim()) {
+        cfg.clientSecret = cfg.appSecret;
+      }
+      return cfg;
+    }
     if (isPlainObject(ocChannels[channelId])) return ocChannels[channelId];
     return {};
   };
@@ -1227,6 +1269,7 @@ export default function Channels() {
           reload();
           loadSoftware();
           loadInstalledPlugins();
+          loadQQChannelState();
           loadNapcatStatus();
           setMsg('');
         }, 5000);
@@ -1531,7 +1574,7 @@ export default function Channels() {
         {/* Channel config */}
         <div className="lg:col-span-3 space-y-6">
           {/* QQ plugin not installed overlay */}
-          {currentDef && currentDef.id === 'qq' && !isQQPluginInstalled(installedPlugins) && (
+          {currentDef && currentDef.id === 'qq' && !isQQActuallyInstalled(installedPlugins, qqChannelState) && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center space-y-4">
               <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center">
                 <AlertTriangle size={32} className="text-amber-500" />
@@ -1544,7 +1587,7 @@ export default function Channels() {
               </div>
               <div className="flex items-center justify-center gap-3 flex-wrap">
                 <button
-                  onClick={() => handleInstallContainer('napcat')}
+                  onClick={handleSetupQQChannel}
                   disabled={installingSw !== null}
                   className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
                 >
@@ -1560,7 +1603,7 @@ export default function Channels() {
           )}
 
           {/* QQ NapCat not installed overlay */}
-          {currentDef && currentDef.id === 'qq' && isQQPluginInstalled(installedPlugins) && !isContainerInstalled('napcat') && softwareList.length > 0 && (
+          {currentDef && currentDef.id === 'qq' && isQQActuallyInstalled(installedPlugins, qqChannelState) && !(qqChannelState?.napcatInstalled || isContainerInstalled('napcat')) && softwareList.length > 0 && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center space-y-4">
               <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
                 <Package size={32} className="text-gray-400" />
@@ -1575,7 +1618,7 @@ export default function Channels() {
               </div>
               {serverPlatform === 'windows' ? (
                 <button
-                  onClick={() => handleInstallContainer('napcat')}
+                  onClick={handleSetupQQChannel}
                   disabled={installingSw !== null}
                   className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
                 >
@@ -1588,7 +1631,7 @@ export default function Channels() {
                 </div>
               ) : (
                 <button
-                  onClick={() => handleInstallContainer('napcat')}
+                  onClick={handleSetupQQChannel}
                   disabled={installingSw !== null}
                   className={`${modern ? 'page-modern-accent px-6 py-3 text-sm' : 'inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
                 >
@@ -1630,7 +1673,7 @@ export default function Channels() {
           )}
 
           {currentDef && !(
-            (currentDef.id === 'qq' && (!isQQPluginInstalled(installedPlugins) || (!isContainerInstalled('napcat') && softwareList.length > 0))) ||
+            (currentDef.id === 'qq' && (!isQQActuallyInstalled(installedPlugins, qqChannelState) || (!(qqChannelState?.napcatInstalled || isContainerInstalled('napcat')) && softwareList.length > 0))) ||
             (currentDef.type === 'plugin' && currentDef.id !== 'qq' && !isPluginInstalled(currentDef.id))
           ) && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-6">
@@ -1772,7 +1815,7 @@ export default function Channels() {
               )}
 
               {/* NapCat Diagnose & Repair */}
-              {currentDef.id === 'qq' && isContainerInstalled('napcat') && (
+              {currentDef.id === 'qq' && (qqChannelState?.napcatInstalled || isContainerInstalled('napcat')) && (
                 <div className="rounded-xl border border-gray-100 dark:border-gray-700/50 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -2385,6 +2428,22 @@ export default function Channels() {
                   <div>首次私聊机器人时，OpenClaw 会返回 pairing code；当前面板还没有 Telegram 配对审批页。</div>
                   <div>可在服务器执行 <span className="font-mono">openclaw pairing list telegram</span> 查看待审批请求，再执行 <span className="font-mono">openclaw pairing approve telegram &lt;code&gt;</span> 完成授权。</div>
                   <div>如果你不想走配对流程，可把“私聊准入策略”改成 <span className="font-mono">open</span>。</div>
+                </div>
+              )}
+
+              {currentDef.id === 'feishu' && String(getEffectiveChannelConfig('feishu')?.dmPolicy || 'pairing') === 'pairing' && (
+                <div className="rounded-lg border border-amber-200 dark:border-amber-800/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300 leading-relaxed space-y-1.5">
+                  <div className="font-semibold text-amber-900 dark:text-amber-100">飞书当前处于配对模式</div>
+                  <div>首次私聊机器人时，OpenClaw 会返回 pairing code。Lite 版保存有凭证时会优先写成免配对模式；如果你看到这里，重新保存一次配置通常就会改成免配对。</div>
+                  <div>若仍需手动审批，可在服务器执行 <span className="font-mono">clawlite-openclaw pairing list feishu</span> 查看待审批请求，再执行 <span className="font-mono">clawlite-openclaw pairing approve feishu &lt;code&gt;</span> 完成授权。</div>
+                </div>
+              )}
+
+              {currentDef.id === 'wecom' && String(getEffectiveChannelConfig('wecom')?.dmPolicy || 'pairing') === 'pairing' && (
+                <div className="rounded-lg border border-amber-200 dark:border-amber-800/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300 leading-relaxed space-y-1.5">
+                  <div className="font-semibold text-amber-900 dark:text-amber-100">企业微信当前处于配对模式</div>
+                  <div>Lite 版保存 Bot ID 和 Secret 时会优先写成免配对模式；如果你看到这里，重新保存一次配置通常就会改成免配对。</div>
+                  <div>若仍需手动审批，可在服务器执行 <span className="font-mono">clawlite-openclaw pairing list wecom</span> 查看待审批请求，再执行 <span className="font-mono">clawlite-openclaw pairing approve wecom &lt;code&gt;</span> 完成授权。</div>
                 </div>
               )}
 

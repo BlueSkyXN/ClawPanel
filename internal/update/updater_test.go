@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewUpdaterStartsIdle(t *testing.T) {
-	updater := NewUpdater("v1.0.0", t.TempDir())
+	updater := NewUpdater("v1.0.0", t.TempDir(), "pro")
 
 	progress := updater.GetProgress()
 	if progress.Status != "idle" {
@@ -21,7 +21,7 @@ func TestNewUpdaterStartsIdle(t *testing.T) {
 }
 
 func TestGetProgressReturnsLogCopy(t *testing.T) {
-	updater := NewUpdater("v1.0.0", t.TempDir())
+	updater := NewUpdater("v1.0.0", t.TempDir(), "pro")
 	updater.log("hello")
 
 	progress := updater.GetProgress()
@@ -34,7 +34,7 @@ func TestGetProgressReturnsLogCopy(t *testing.T) {
 }
 
 func TestUpdatePopupLifecycle(t *testing.T) {
-	updater := NewUpdater("v1.0.0", t.TempDir())
+	updater := NewUpdater("v1.0.0", t.TempDir(), "pro")
 	info := &UpdateInfo{
 		LatestVersion: "v1.1.0",
 		ReleaseNote:   "bug fixes",
@@ -64,7 +64,7 @@ func TestUpdatePopupLifecycle(t *testing.T) {
 }
 
 func TestStatusAndErrorTransitions(t *testing.T) {
-	updater := NewUpdater("v1.0.0", t.TempDir())
+	updater := NewUpdater("v1.0.0", t.TempDir(), "pro")
 
 	updater.setStatus("downloading", 25, "downloading file")
 	progress := updater.GetProgress()

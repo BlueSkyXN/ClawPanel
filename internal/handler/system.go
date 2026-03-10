@@ -25,6 +25,24 @@ import (
 func GetVersion(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		currentVersion := resolveOpenClawCurrentVersion(cfg)
+		if cfg.IsLiteEdition() {
+			if currentVersion == "unknown" || currentVersion == "" {
+				currentVersion = detectOpenClawVersion(cfg)
+			}
+			if currentVersion == "unknown" || currentVersion == "" {
+				currentVersion = "2026.2.26"
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"ok":              true,
+				"currentVersion":  currentVersion,
+				"latestVersion":   currentVersion,
+				"lastCheckedAt":   "",
+				"updateAvailable": false,
+				"edition":         "lite",
+				"bundled":         true,
+			})
+			return
+		}
 
 		var updateInfo map[string]interface{}
 		updateCheckPath := filepath.Join(cfg.OpenClawDir, "update-check.json")
@@ -54,16 +72,19 @@ func GetVersion(cfg *config.Config) gin.HandlerFunc {
 			"latestVersion":   latestVersion,
 			"lastCheckedAt":   lastCheckedAt,
 			"updateAvailable": updateAvailable,
+			"edition":         cfg.Edition,
+			"bundled":         cfg.IsLiteEdition(),
 		})
 	}
 }
 
 // GetPanelVersion 获取 ClawPanel 面板版本
-func GetPanelVersion(version string) gin.HandlerFunc {
+func GetPanelVersion(version string, edition string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"ok":      true,
 			"version": version,
+			"edition": edition,
 		})
 	}
 }
@@ -254,7 +275,6 @@ func candidateOpenClawBins(cfg *config.Config) []string {
 		}
 	}
 	bins = append(bins, "openclaw")
-
 	seen := map[string]struct{}{}
 	uniq := make([]string, 0, len(bins))
 	for _, bin := range bins {
@@ -291,7 +311,6 @@ func restartGatewayWithBinary(cfg *config.Config, procMgr *process.Manager, bin 
 	if stopErr != nil {
 		_ = stopOut
 	}
-
 	if procMgr != nil {
 		_ = waitGatewayState(procMgr, false, 8*time.Second)
 	}
@@ -309,7 +328,6 @@ func restartGatewayWithBinary(cfg *config.Config, procMgr *process.Manager, bin 
 		go func(c *exec.Cmd) {
 			_, _ = c.Process.Wait()
 		}(cmd)
-
 		if procMgr == nil {
 			return nil
 		}
@@ -318,7 +336,6 @@ func restartGatewayWithBinary(cfg *config.Config, procMgr *process.Manager, bin 
 		}
 		startErrs = append(startErrs, fmt.Sprintf("%s: 网关未在超时时间内就绪", strings.Join(args, " ")))
 	}
-
 	msg := fmt.Sprintf("%s 重启失败", bin)
 	if stopErr != nil {
 		msg += "; stop: " + strings.TrimSpace(stopOut)

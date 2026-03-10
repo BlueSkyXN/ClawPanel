@@ -1,14 +1,16 @@
 VERSION := 5.2.7
 BINARY := clawpanel
+EDITION ?= pro
+APP_NAME ?= $(BINARY)
 MODULE := github.com/zhaoxinyi02/ClawPanel
-LDFLAGS := -s -w -X main.Version=$(VERSION)
+LDFLAGS := -s -w -X github.com/zhaoxinyi02/ClawPanel/internal/buildinfo.Version=$(VERSION) -X github.com/zhaoxinyi02/ClawPanel/internal/buildinfo.Edition=$(EDITION)
 GOFLAGS := -trimpath
 EMBED_DIR := cmd/clawpanel/frontend/dist
 
 # npm 国内镜像
 NPM_REGISTRY := https://registry.npmmirror.com
 
-.PHONY: all clean frontend backend build dev cross cross-all installer help
+.PHONY: all clean frontend backend build dev cross cross-all installer help build-lite build-pro backend-lite backend-pro package-lite-core package-lite-plugins package-lite-qq
 
 all: build
 
@@ -25,13 +27,13 @@ frontend:
 # 构建后端（需要先构建前端）
 backend: frontend
 	@echo "==> 构建 Go 后端..."
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/clawpanel/
-	@echo "==> 后端构建完成: bin/$(BINARY)"
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/clawpanel/
+	@echo "==> 后端构建完成: bin/$(APP_NAME)"
 
 # 完整构建
 build: backend
 	@echo "==> ClawPanel v$(VERSION) 构建完成!"
-	@ls -lh bin/$(BINARY)
+	@ls -lh bin/$(APP_NAME)
 
 # 开发模式（前端热重载 + Go 后端）
 dev:
@@ -41,7 +43,28 @@ dev:
 
 # 仅构建后端（假设前端已构建）
 backend-only:
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/clawpanel/
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/clawpanel/
+
+backend-lite: frontend
+	$(MAKE) backend APP_NAME=clawpanel-lite EDITION=lite
+
+backend-pro: frontend
+	$(MAKE) backend APP_NAME=clawpanel EDITION=pro
+
+build-lite: frontend
+	$(MAKE) backend-only APP_NAME=clawpanel-lite EDITION=lite
+
+build-pro: frontend
+	$(MAKE) backend-only APP_NAME=clawpanel EDITION=pro
+
+package-lite-plugins:
+	bash scripts/package-lite-plugins.sh
+
+package-lite-core: build-lite
+	bash scripts/package-lite-core.sh $(VERSION)
+
+package-lite-qq:
+	bash scripts/package-lite-qq-bundle.sh $(VERSION)
 
 # 交叉编译所有平台（文件名带版本号）
 cross: frontend
@@ -83,6 +106,11 @@ help:
 	@echo "  make frontend     仅构建前端"
 	@echo "  make backend      构建后端（含前端）"
 	@echo "  make backend-only 仅构建后端（需前端已构建）"
+	@echo "  make build-lite   构建 Lite Linux 版主程序"
+	@echo "  make build-pro    构建 Pro 版主程序"
+	@echo "  make package-lite-plugins 收集 Lite 预置插件"
+	@echo "  make package-lite-core  打包 Lite Core"
+	@echo "  make package-lite-qq    导出 Lite QQ Bundle"
 	@echo "  make cross        交叉编译所有平台"
 	@echo "  make installer    构建 Windows exe 安装包"
 	@echo "  make release      构建全部发布产物"

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	json5 "github.com/titanous/json5"
+	"github.com/zhaoxinyi02/ClawPanel/internal/buildinfo"
 )
 
 // Config 应用配置
@@ -24,6 +25,7 @@ type Config struct {
 	OpenClawDir  string `json:"openClawDir"`
 	OpenClawApp  string `json:"openClawApp"`
 	OpenClawWork string `json:"openClawWork"`
+	Edition      string `json:"edition,omitempty"`
 	JWTSecret    string `json:"jwtSecret"`
 	AdminToken   string `json:"adminToken"`
 	Debug        bool   `json:"debug"`
@@ -49,6 +51,7 @@ func Load() (*Config, error) {
 		Port:        DefaultPort,
 		DataDir:     dataDir,
 		OpenClawDir: getDefaultOpenClawDir(),
+		Edition:     buildinfo.NormalizedEdition(),
 		JWTSecret:   DefaultJWTSecret,
 		AdminToken:  DefaultAdminToken,
 		Debug:       false,
@@ -82,6 +85,9 @@ func Load() (*Config, error) {
 	if os.Getenv("CLAWPANEL_DEBUG") == "true" {
 		cfg.Debug = true
 	}
+	if v := strings.TrimSpace(strings.ToLower(os.Getenv("CLAWPANEL_EDITION"))); v != "" {
+		cfg.Edition = normalizeEdition(v)
+	}
 
 	// 尝试从文件加载
 	if data, err := os.ReadFile(cfgPath); err == nil {
@@ -92,20 +98,34 @@ func Load() (*Config, error) {
 
 	// Windows 服务场景下避免误落到 systemprofile
 	cfg.OpenClawDir = resolveOpenClawDir(cfg.OpenClawDir)
+	cfg.Edition = normalizeEdition(cfg.Edition)
+	if cfg.IsLiteEdition() {
+		cfg.Port = DefaultPort
+		cfg.DataDir = filepath.Join(cfg.InstallRoot(), "data")
+		cfg.OpenClawDir = cfg.BundledOpenClawConfigDir()
+		cfg.OpenClawApp = cfg.BundledOpenClawAppDir()
+		cfg.OpenClawWork = cfg.BundledOpenClawWorkDir()
+	}
 
 	// 路径校验：
 	// 1) 如果配置中的路径是另一个 OS 的路径格式，则重新探测
 	// 2) 如果是相对路径（历史版本遗留），统一升级为绝对路径
 	// 例如：Windows 上读到了 /root/.openclaw（Linux 路径），或 Linux 上读到了 C:\... （Windows 路径）
 	if isStaleOSPath(cfg.OpenClawDir) || !filepath.IsAbs(cfg.OpenClawDir) {
-		cfg.OpenClawDir = getDefaultOpenClawDir()
+		if cfg.IsLiteEdition() {
+			cfg.OpenClawDir = cfg.BundledOpenClawConfigDir()
+		} else {
+			cfg.OpenClawDir = getDefaultOpenClawDir()
+		}
 		cfg.OpenClawWork = ""
 		cfg.OpenClawApp = ""
 	}
 
 	// 设置默认工作目录（基于 OpenClawDir 的父目录）
 	parentDir := filepath.Dir(cfg.OpenClawDir) // e.g. /home/user/openclaw or C:\Users\xxx\.openclaw -> C:\Users\xxx
-	if cfg.OpenClawWork == "" || !dirExists(cfg.OpenClawWork) {
+	if cfg.IsLiteEdition() {
+		cfg.OpenClawWork = cfg.BundledOpenClawWorkDir()
+	} else if cfg.OpenClawWork == "" || !dirExists(cfg.OpenClawWork) {
 		// Try npm global openclaw installation first
 		npmGlobalDir := getNpmGlobalOpenClawDir()
 		cfg.OpenClawWork = findFirstExistingDir(
@@ -118,7 +138,9 @@ func Load() (*Config, error) {
 		}
 	}
 	// 设置默认 App 目录
-	if cfg.OpenClawApp == "" || !dirExists(cfg.OpenClawApp) || !fileExists(filepath.Join(cfg.OpenClawApp, "package.json")) {
+	if cfg.IsLiteEdition() {
+		cfg.OpenClawApp = cfg.BundledOpenClawAppDir()
+	} else if cfg.OpenClawApp == "" || !dirExists(cfg.OpenClawApp) || !fileExists(filepath.Join(cfg.OpenClawApp, "package.json")) {
 		// Try npm global openclaw installation first
 		npmGlobalDir := getNpmGlobalOpenClawDir()
 		cfg.OpenClawApp = findFirstExistingDir(
@@ -143,6 +165,139 @@ func Load() (*Config, error) {
 	cfg.Save()
 
 	return cfg, nil
+}
+
+func normalizeEdition(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "lite":
+		return "lite"
+	default:
+		return "pro"
+	}
+}
+
+func (c *Config) IsLiteEdition() bool {
+	if c == nil {
+		return buildinfo.IsLite()
+	}
+	return normalizeEdition(c.Edition) == "lite"
+}
+
+func (c *Config) IsProEdition() bool {
+	return !c.IsLiteEdition()
+}
+
+func (c *Config) InstallRoot() string {
+	exe, err := os.Executable()
+	if err != nil || strings.TrimSpace(exe) == "" {
+		if c != nil && strings.TrimSpace(c.DataDir) != "" {
+			return filepath.Dir(c.DataDir)
+		}
+		return "."
+	}
+	return filepath.Dir(exe)
+}
+
+func (c *Config) BundledRuntimeRoot() string {
+	return filepath.Join(c.InstallRoot(), "runtime")
+}
+
+func (c *Config) BundledOpenClawConfigDir() string {
+	return filepath.Join(c.InstallRoot(), "data", "openclaw-config")
+}
+
+func (c *Config) BundledOpenClawWorkDir() string {
+	return filepath.Join(c.InstallRoot(), "data", "openclaw-work")
+}
+
+func (c *Config) BundledOpenClawAppDir() string {
+	root := c.BundledRuntimeRoot()
+	for _, candidate := range []string{
+		filepath.Join(root, "openclaw"),
+		filepath.Join(root, "openclaw", "package"),
+		filepath.Join(root, "openclaw", "app"),
+	} {
+		if fileExists(filepath.Join(candidate, "package.json")) || fileExists(filepath.Join(candidate, "openclaw.mjs")) {
+			return candidate
+		}
+	}
+	return filepath.Join(root, "openclaw")
+}
+
+func (c *Config) BundledOpenClawEntrypoint() string {
+	app := c.BundledOpenClawAppDir()
+	for _, candidate := range []string{
+		filepath.Join(c.BundledRuntimeRoot(), "bin", bundledOpenClawCLIName()),
+		filepath.Join(app, bundledOpenClawCLIName()),
+		filepath.Join(app, "openclaw.mjs"),
+	} {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return filepath.Join(app, "openclaw.mjs")
+}
+
+func (c *Config) BundledPluginsDir() string {
+	return filepath.Join(c.BundledRuntimeRoot(), "bundled-plugins")
+}
+
+func (c *Config) BundledPluginDir(pluginID string) string {
+	return filepath.Join(c.BundledPluginsDir(), strings.TrimSpace(pluginID))
+}
+
+func bundledOpenClawCLIName() string {
+	if runtime.GOOS == "windows" {
+		return "openclaw.cmd"
+	}
+	return "openclaw"
+}
+
+func (c *Config) BundledNodeBinaryPath() string {
+	root := c.BundledRuntimeRoot()
+	for _, candidate := range []string{
+		filepath.Join(root, "node", "bin", "node"),
+		filepath.Join(root, "node", "node"),
+		filepath.Join(root, "bin", "node"),
+		filepath.Join(root, "node.exe"),
+		filepath.Join(root, "node", "node.exe"),
+	} {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func (c *Config) DefaultGatewayPort() int {
+	if c.IsLiteEdition() {
+		return 18790
+	}
+	return 18789
+}
+
+func (c *Config) OpenClawCommand(args ...string) (*exec.Cmd, error) {
+	if c.IsLiteEdition() {
+		entry := c.BundledOpenClawEntrypoint()
+		if strings.HasSuffix(entry, ".mjs") {
+			node := c.BundledNodeBinaryPath()
+			if node == "" {
+				return nil, fmt.Errorf("Lite 版未找到内置 Node.js 运行时")
+			}
+			cmd := exec.Command(node, append([]string{entry}, args...)...)
+			return cmd, nil
+		}
+		if fileExists(entry) {
+			return exec.Command(entry, args...), nil
+		}
+	}
+	if bin := DetectOpenClawBinaryPath(); bin != "" {
+		return exec.Command(bin, args...), nil
+	}
+	if p, err := exec.LookPath("openclaw"); err == nil && p != "" {
+		return exec.Command(p, args...), nil
+	}
+	return nil, fmt.Errorf("未找到 openclaw 可执行文件")
 }
 
 // Save 保存配置到文件

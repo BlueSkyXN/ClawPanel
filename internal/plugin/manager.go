@@ -785,7 +785,75 @@ func (m *Manager) CheckConflicts(pluginID string) []string {
 // sync are flagged via NeedManifestRepair / NeedConfigSync for a subsequent
 // reconcilePluginStates call.
 func (m *Manager) scanInstalledPlugins() {
-	entries, err := os.ReadDir(m.pluginsDir)
+	m.scanPluginDir(m.pluginsDir, "local", !m.cfg.IsLiteEdition(), false)
+	if m.cfg.IsLiteEdition() {
+		m.scanLiteRuntimePlugins()
+	}
+}
+
+func (m *Manager) scanLiteRuntimePlugins() {
+	appDir := strings.TrimSpace(m.cfg.OpenClawApp)
+	if appDir == "" {
+		appDir = m.cfg.BundledOpenClawAppDir()
+	}
+	if appDir == "" {
+		return
+	}
+	ocConfig, _ := m.cfg.ReadOpenClawJSON()
+	channels, _ := ocConfig["channels"].(map[string]interface{})
+	entries := map[string]interface{}{}
+	if plugins, ok := ocConfig["plugins"].(map[string]interface{}); ok {
+		if currentEntries, ok := plugins["entries"].(map[string]interface{}); ok && currentEntries != nil {
+			entries = currentEntries
+		}
+	}
+	for _, pluginID := range []string{"telegram", "feishu", "qq", "qqbot", "dingtalk", "wecom", "wecom-app"} {
+		pluginDir := filepath.Join(appDir, "extensions", pluginID)
+		meta, err := m.readPluginMeta(pluginDir)
+		if err != nil {
+			continue
+		}
+		enabled := false
+		hasChannelEnabled := false
+		if ch, ok := channels[pluginID].(map[string]interface{}); ok {
+			if v, ok := ch["enabled"].(bool); ok {
+				enabled = v
+				hasChannelEnabled = true
+			}
+		}
+		if !hasChannelEnabled {
+			if entry, ok := entries[meta.ID].(map[string]interface{}); ok {
+				if v, ok := entry["enabled"].(bool); ok {
+					enabled = v
+				}
+			}
+		}
+		source := "bundled"
+		version := meta.Version
+		m.mu.Lock()
+		if existing, exists := m.plugins[meta.ID]; !exists {
+			m.plugins[meta.ID] = &InstalledPlugin{
+				PluginMeta:  *meta,
+				Enabled:     enabled,
+				InstalledAt: time.Now().Format(time.RFC3339),
+				Source:      source,
+				Dir:         pluginDir,
+			}
+		} else {
+			existing.Dir = pluginDir
+			existing.PluginMeta = *meta
+			existing.Enabled = enabled
+			source = existing.Source
+		}
+		m.mu.Unlock()
+		if err := m.syncOpenClawPluginState(meta.ID, pluginDir, enabled, source, version); err != nil {
+			continue
+		}
+	}
+}
+
+func (m *Manager) scanPluginDir(baseDir string, source string, defaultEnabled bool, skipExisting bool) {
+	entries, err := os.ReadDir(baseDir)
 	if err != nil {
 		return
 	}
@@ -794,7 +862,7 @@ func (m *Manager) scanInstalledPlugins() {
 		if !entry.IsDir() {
 			continue
 		}
-		pluginDir := filepath.Join(m.pluginsDir, entry.Name())
+		pluginDir := filepath.Join(baseDir, entry.Name())
 		meta, err := m.readPluginMeta(pluginDir)
 		if err != nil {
 			continue
@@ -806,21 +874,32 @@ func (m *Manager) scanInstalledPlugins() {
 			needManifest = true
 		}
 
+		enabled := defaultEnabled
 		m.mu.Lock()
-		if _, exists := m.plugins[meta.ID]; !exists {
+		if existing, exists := m.plugins[meta.ID]; !exists {
 			m.plugins[meta.ID] = &InstalledPlugin{
 				PluginMeta:         *meta,
-				Enabled:            true,
+				Enabled:            enabled,
 				InstalledAt:        time.Now().Format(time.RFC3339),
-				Source:             "local",
+				Source:             source,
 				Dir:                pluginDir,
 				NeedManifestRepair: needManifest,
 				NeedConfigSync:     true,
 			}
 		} else {
-			m.plugins[meta.ID].Dir = pluginDir
-			m.plugins[meta.ID].PluginMeta = *meta
-			m.plugins[meta.ID].NeedManifestRepair = needManifest
+			if skipExisting {
+				existing.NeedManifestRepair = existing.NeedManifestRepair || needManifest
+				enabled = existing.Enabled
+				source = existing.Source
+				m.mu.Unlock()
+				continue
+			}
+			existing.Dir = pluginDir
+			existing.PluginMeta = *meta
+			existing.NeedManifestRepair = needManifest
+			existing.NeedConfigSync = true
+			enabled = existing.Enabled
+			source = existing.Source
 		}
 		m.mu.Unlock()
 	}

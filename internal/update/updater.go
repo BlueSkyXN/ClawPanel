@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	UpdateCheckURL = "http://39.102.53.188:16198/clawpanel/update.json"
-	httpTimeout    = 30 * time.Second
+	httpTimeout     = 30 * time.Second
 	downloadTimeout = 300 * time.Second
 )
 
@@ -42,7 +41,7 @@ type UpdatePopup struct {
 
 // UpdateProgress represents the current update progress
 type UpdateProgress struct {
-	Status     string   `json:"status"` // idle, checking, downloading, verifying, replacing, restarting, done, error
+	Status     string   `json:"status"`   // idle, checking, downloading, verifying, replacing, restarting, done, error
 	Progress   int      `json:"progress"` // 0-100
 	Message    string   `json:"message"`
 	Log        []string `json:"log"`
@@ -55,15 +54,17 @@ type UpdateProgress struct {
 type Updater struct {
 	currentVersion string
 	dataDir        string
+	cfg            editionConfig
 	mu             sync.Mutex
 	progress       UpdateProgress
 }
 
 // NewUpdater creates a new Updater
-func NewUpdater(currentVersion, dataDir string) *Updater {
+func NewUpdater(currentVersion, dataDir, edition string) *Updater {
 	return &Updater{
 		currentVersion: currentVersion,
 		dataDir:        dataDir,
+		cfg:            newEditionConfig(edition),
 		progress: UpdateProgress{
 			Status: "idle",
 			Log:    []string{},
@@ -93,25 +94,17 @@ func getPlatformKey() string {
 
 // CheckUpdate checks for available updates
 func (u *Updater) CheckUpdate() (*UpdateInfo, bool, error) {
-	client := &http.Client{Timeout: httpTimeout}
-	resp, err := client.Get(UpdateCheckURL)
+	info, err := u.fetchFromGitHub()
 	if err != nil {
-		return nil, false, fmt.Errorf("请求更新服务器失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, false, fmt.Errorf("更新服务器返回错误: HTTP %d", resp.StatusCode)
-	}
-
-	var info UpdateInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, false, fmt.Errorf("解析更新信息失败: %v", err)
+		info, err = u.fetchFromAccel()
+		if err != nil {
+			return nil, false, fmt.Errorf("请求更新信息失败: %v", err)
+		}
 	}
 
 	hasUpdate := info.LatestVersion != "" && info.LatestVersion != u.currentVersion && isNewerVersion(info.LatestVersion, u.currentVersion)
 
-	return &info, hasUpdate, nil
+	return info, hasUpdate, nil
 }
 
 // GetProgress returns the current update progress
@@ -217,21 +210,21 @@ echo "[ClawPanel Updater] 开始更新..."
 
 # Stop service
 echo "[ClawPanel Updater] 停止 ClawPanel 服务..."
-systemctl stop clawpanel 2>/dev/null || true
+systemctl stop %s 2>/dev/null || true
 sleep 1
 
 # Wait for process to exit (up to 10s)
 for i in $(seq 1 10); do
-  if ! pgrep -x clawpanel >/dev/null 2>&1; then
+  if ! pgrep -x %s >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
 # Kill if still running
-if pgrep -x clawpanel >/dev/null 2>&1; then
+if pgrep -x %s >/dev/null 2>&1; then
   echo "[ClawPanel Updater] 强制停止旧进程..."
-  pkill -9 -x clawpanel 2>/dev/null || true
+  pkill -9 -x %s 2>/dev/null || true
   sleep 1
 fi
 
@@ -249,13 +242,13 @@ echo "[ClawPanel Updater] 程序替换完成"
 
 # Start service
 echo "[ClawPanel Updater] 启动 ClawPanel 服务..."
-systemctl start clawpanel 2>/dev/null || ( echo "[ClawPanel Updater] systemctl 启动失败，尝试直接启动..." && nohup "%s" >/dev/null 2>&1 & )
+systemctl start %s 2>/dev/null || ( echo "[ClawPanel Updater] systemctl 启动失败，尝试直接启动..." && nohup "%s" >/dev/null 2>&1 & )
 echo "[ClawPanel Updater] 更新完成!"
 
 # Clean up
 rm -f "%s"
 rm -rf "%s"
-`, currentBin, currentBin, currentBin, currentBin, tmpFile, currentBin, currentBin, currentBin, scriptPath, tmpDir)
+`, u.cfg.ServiceName, u.cfg.BinaryName, u.cfg.BinaryName, u.cfg.BinaryName, u.cfg.ServiceName, currentBin, currentBin, currentBin, currentBin, tmpFile, currentBin, currentBin, currentBin, scriptPath, tmpDir)
 
 		if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
 			u.setError("写入更新脚本失败: %v", err)
@@ -285,7 +278,7 @@ rm -rf "%s"
 				os.Remove(currentBin)
 				copyFile(tmpFile, currentBin)
 				os.Chmod(currentBin, 0755)
-				execCmd("systemctl", "restart", "clawpanel")
+				execCmd("systemctl", "restart", u.cfg.ServiceName)
 				return
 			}
 			log.Printf("[Updater] 更新脚本已启动 (PID: %d)，等待接管...", cmd.Process.Pid)
@@ -336,6 +329,75 @@ rm -rf "%s"
 	}()
 }
 
+func (u *Updater) fetchFromAccel() (*UpdateInfo, error) {
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Get(u.cfg.UpdateCheckURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var info UpdateInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+func (u *Updater) fetchFromGitHub() (*UpdateInfo, error) {
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Get(u.cfg.GitHubReleasesAPI)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var releases []struct {
+		TagName string `json:"tag_name"`
+		Body    string `json:"body"`
+		PubAt   string `json:"published_at"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, err
+	}
+	for _, release := range releases {
+		if !u.cfg.matchesTag(release.TagName) {
+			continue
+		}
+		info := &UpdateInfo{
+			LatestVersion: u.cfg.trimTag(release.TagName),
+			ReleaseTime:   release.PubAt,
+			ReleaseNote:   release.Body,
+			DownloadURLs:  map[string]string{},
+			SHA256:        map[string]string{},
+		}
+		for _, a := range release.Assets {
+			name := strings.ToLower(a.Name)
+			if strings.Contains(name, "linux") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
+				info.DownloadURLs["linux_amd64"] = a.URL
+			} else if strings.Contains(name, "linux") && strings.Contains(name, "arm64") {
+				info.DownloadURLs["linux_arm64"] = a.URL
+			} else if strings.Contains(name, "darwin") && strings.Contains(name, "amd64") {
+				info.DownloadURLs["darwin_amd64"] = a.URL
+			} else if strings.Contains(name, "darwin") && strings.Contains(name, "arm64") {
+				info.DownloadURLs["darwin_arm64"] = a.URL
+			} else if strings.Contains(name, "windows") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
+				info.DownloadURLs["windows_amd64"] = a.URL
+			}
+		}
+		return info, nil
+	}
+	return nil, fmt.Errorf("未找到 %s 版本发布", u.cfg.Edition)
+}
+
 func (u *Updater) downloadFile(url, dest string) error {
 	client := &http.Client{Timeout: downloadTimeout}
 	resp, err := client.Get(url)
@@ -366,7 +428,7 @@ func (u *Updater) downloadFile(url, dest string) error {
 			}
 			downloaded += int64(n)
 			if totalSize > 0 {
-				pct := int(float64(downloaded) / float64(totalSize) * 50) + 10 // 10-60%
+				pct := int(float64(downloaded)/float64(totalSize)*50) + 10 // 10-60%
 				u.setStatus("downloading", pct, fmt.Sprintf("正在下载... %.1f MB / %.1f MB", float64(downloaded)/1048576, float64(totalSize)/1048576))
 			}
 		}

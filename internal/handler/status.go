@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zhaoxinyi02/ClawPanel/internal/buildinfo"
 	"github.com/zhaoxinyi02/ClawPanel/internal/config"
 	"github.com/zhaoxinyi02/ClawPanel/internal/monitor"
 	"github.com/zhaoxinyi02/ClawPanel/internal/process"
@@ -175,11 +176,19 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 
 		c.JSON(http.StatusOK, gin.H{
 			"ok": true,
+			"panel": gin.H{
+				"version": buildinfo.Version,
+				"edition": buildinfo.NormalizedEdition(),
+			},
 			"openclaw": gin.H{
 				"configured":      cfg.OpenClawInstalled(),
 				"currentModel":    currentModel,
 				"enabledChannels": channels,
 				"runtime":         runtimeHealth,
+				"edition":         cfg.Edition,
+				"managedRuntime":  cfg.IsLiteEdition(),
+				"bundledRuntime":  cfg.IsLiteEdition(),
+				"gatewayPort":     cfg.DefaultGatewayPort(),
 			},
 			"gateway": gin.H{
 				"running": gatewayRunning,

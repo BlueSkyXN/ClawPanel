@@ -24,11 +24,6 @@ const (
 	UpdaterPort        = 19528
 	TokenValidDuration = 5 * time.Minute
 	TokenSecret        = "clawpanel-updater-secret-2026"
-
-	GitHubReleaseAPI   = "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases/latest"
-	AccelUpdateJSON    = "http://39.102.53.188:16198/clawpanel/update.json"
-	GitHubDownloadBase = "https://github.com/zhaoxinyi02/ClawPanel/releases/download"
-	AccelDownloadBase  = "http://39.102.53.188:16198/clawpanel/releases"
 )
 
 // UpdateStep represents a step in the update process
@@ -71,6 +66,7 @@ type Server struct {
 	openClawDir    string // OpenClaw config directory
 	panelBin       string // path to clawpanel binary
 	panelPort      int
+	editionCfg     editionConfig
 	mu             sync.Mutex
 	state          UpdateState // ClawPanel update state
 	ocState        UpdateState // OpenClaw update state
@@ -79,7 +75,7 @@ type Server struct {
 }
 
 // NewServer creates a new updater server
-func NewServer(currentVersion, dataDir, openClawDir string, panelPort int) *Server {
+func NewServer(currentVersion, dataDir, openClawDir string, panelPort int, edition string) *Server {
 	bin, _ := os.Executable()
 	bin, _ = filepath.EvalSymlinks(bin)
 	return &Server{
@@ -88,6 +84,7 @@ func NewServer(currentVersion, dataDir, openClawDir string, panelPort int) *Serv
 		openClawDir:    openClawDir,
 		panelBin:       bin,
 		panelPort:      panelPort,
+		editionCfg:     newEditionConfig(edition),
 		state: UpdateState{
 			Phase: "idle",
 			Steps: defaultSteps(),
@@ -935,18 +932,7 @@ func (s *Server) doUpdate(preferredSource string) {
 	platformKey := getPlatformKey()
 	downloadURL := ""
 
-	// Try GitHub first, fallback to accel
-	if source == "github" {
-		tag := info.LatestVersion
-		if !strings.HasPrefix(tag, "v") {
-			tag = "v" + tag
-		}
-		suffix := "clawpanel-" + strings.Replace(platformKey, "_", "-", -1)
-		if runtime.GOOS == "windows" {
-			suffix += ".exe"
-		}
-		downloadURL = fmt.Sprintf("%s/%s/%s", GitHubDownloadBase, tag, suffix)
-	} else if urls, ok := info.DownloadURLs[platformKey]; ok {
+	if urls, ok := info.DownloadURLs[platformKey]; ok {
 		downloadURL = urls
 	}
 
@@ -977,16 +963,11 @@ func (s *Server) doUpdate(preferredSource string) {
 			}
 		} else {
 			// Try GitHub
-			tag := info.LatestVersion
-			if !strings.HasPrefix(tag, "v") {
-				tag = "v" + tag
+			fallbackInfo, ferr := s.fetchFromGitHub()
+			if ferr == nil {
+				fallbackURL = fallbackInfo.DownloadURLs[platformKey]
+				fallbackSource = "github"
 			}
-			suffix := "clawpanel-" + strings.Replace(platformKey, "_", "-", -1)
-			if runtime.GOOS == "windows" {
-				suffix += ".exe"
-			}
-			fallbackURL = fmt.Sprintf("%s/%s/%s", GitHubDownloadBase, tag, suffix)
-			fallbackSource = "github"
 		}
 		if fallbackURL != "" {
 			s.logMsg("📥 切换至 %s 线路下载...", fallbackSource)
@@ -1171,7 +1152,7 @@ func (s *Server) doReplace(tmpFile string) {
 		if !s.isPanelRunning() {
 			s.logMsg("❌ 服务启动失败，尝试回滚...")
 			if _, berr := os.Stat(backupPath); berr == nil {
-				exec.Command("systemctl", "stop", "clawpanel").Run()
+				exec.Command("systemctl", "stop", s.editionCfg.ServiceName).Run()
 				time.Sleep(1 * time.Second)
 				os.Remove(s.panelBin)
 				copyFile(backupPath, s.panelBin)
@@ -1270,7 +1251,7 @@ func (s *Server) startPanel() error {
 		}
 		return nil
 	}
-	err := exec.Command("systemctl", "start", "clawpanel").Run()
+	err := exec.Command("systemctl", "start", s.editionCfg.ServiceName).Run()
 	if runtime.GOOS == "darwin" {
 		if err := exec.Command("launchctl", "kickstart", "-k", "system/com.clawpanel.service").Run(); err == nil {
 			return nil
@@ -1300,7 +1281,7 @@ func (s *Server) isPanelRunning() bool {
 	}
 	if commandExists("systemctl") {
 		// Use systemctl is-active instead of pgrep (pgrep would match updater child too)
-		out, _ := exec.Command("systemctl", "is-active", "clawpanel").Output()
+		out, _ := exec.Command("systemctl", "is-active", s.editionCfg.ServiceName).Output()
 		return strings.TrimSpace(string(out)) == "active"
 	}
 	return isPortOpen(s.panelPort)
@@ -1344,24 +1325,21 @@ func killPanelProcessesExceptUpdater(selfPID, parentPID int) error {
 }
 
 func (s *Server) fetchLatestVersion() (*VersionInfo, string, error) {
-	// Try accel server first (faster in China)
-	info, err := s.fetchFromAccel()
-	if err == nil {
-		return info, "accel", nil
-	}
-	log.Printf("[Updater] 加速服务器请求失败: %v, 尝试 GitHub...", err)
-
-	// Fallback to GitHub
-	info, err = s.fetchFromGitHub()
+	info, err := s.fetchFromGitHub()
 	if err == nil {
 		return info, "github", nil
+	}
+	log.Printf("[Updater] GitHub 请求失败: %v, 尝试加速服务器...", err)
+	info, err = s.fetchFromAccel()
+	if err == nil {
+		return info, "accel", nil
 	}
 	return nil, "", fmt.Errorf("所有线路均失败: %v", err)
 }
 
 func (s *Server) fetchFromAccel() (*VersionInfo, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(AccelUpdateJSON)
+	resp, err := client.Get(s.editionCfg.UpdateJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,7 +1356,7 @@ func (s *Server) fetchFromAccel() (*VersionInfo, error) {
 
 func (s *Server) fetchFromGitHub() (*VersionInfo, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(GitHubReleaseAPI)
+	resp, err := client.Get(s.editionCfg.GitHubReleasesAPI)
 	if err != nil {
 		return nil, err
 	}
@@ -1386,7 +1364,7 @@ func (s *Server) fetchFromGitHub() (*VersionInfo, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	var release struct {
+	var releases []struct {
 		TagName string `json:"tag_name"`
 		Body    string `json:"body"`
 		PubAt   string `json:"published_at"`
@@ -1395,32 +1373,37 @@ func (s *Server) fetchFromGitHub() (*VersionInfo, error) {
 			URL  string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
 		return nil, err
 	}
-
-	info := &VersionInfo{
-		LatestVersion: strings.TrimPrefix(release.TagName, "v"),
-		ReleaseTime:   release.PubAt,
-		ReleaseNote:   release.Body,
-		DownloadURLs:  map[string]string{},
-		SHA256:        map[string]string{},
-	}
-	for _, a := range release.Assets {
-		name := strings.ToLower(a.Name)
-		if strings.Contains(name, "linux") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
-			info.DownloadURLs["linux_amd64"] = a.URL
-		} else if strings.Contains(name, "linux") && strings.Contains(name, "arm64") {
-			info.DownloadURLs["linux_arm64"] = a.URL
-		} else if strings.Contains(name, "darwin") && strings.Contains(name, "amd64") {
-			info.DownloadURLs["darwin_amd64"] = a.URL
-		} else if strings.Contains(name, "darwin") && strings.Contains(name, "arm64") {
-			info.DownloadURLs["darwin_arm64"] = a.URL
-		} else if strings.Contains(name, "windows") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
-			info.DownloadURLs["windows_amd64"] = a.URL
+	for _, release := range releases {
+		if !s.editionCfg.matchesTag(release.TagName) {
+			continue
 		}
+		info := &VersionInfo{
+			LatestVersion: s.editionCfg.trimTag(release.TagName),
+			ReleaseTime:   release.PubAt,
+			ReleaseNote:   release.Body,
+			DownloadURLs:  map[string]string{},
+			SHA256:        map[string]string{},
+		}
+		for _, a := range release.Assets {
+			name := strings.ToLower(a.Name)
+			if strings.Contains(name, "linux") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
+				info.DownloadURLs["linux_amd64"] = a.URL
+			} else if strings.Contains(name, "linux") && strings.Contains(name, "arm64") {
+				info.DownloadURLs["linux_arm64"] = a.URL
+			} else if strings.Contains(name, "darwin") && strings.Contains(name, "amd64") {
+				info.DownloadURLs["darwin_amd64"] = a.URL
+			} else if strings.Contains(name, "darwin") && strings.Contains(name, "arm64") {
+				info.DownloadURLs["darwin_arm64"] = a.URL
+			} else if strings.Contains(name, "windows") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
+				info.DownloadURLs["windows_amd64"] = a.URL
+			}
+		}
+		return info, nil
 	}
-	return info, nil
+	return nil, fmt.Errorf("未找到 %s 版本发布", s.editionCfg.Edition)
 }
 
 func (s *Server) downloadFile(url, dest, source string) error {

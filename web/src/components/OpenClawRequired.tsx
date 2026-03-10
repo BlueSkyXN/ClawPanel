@@ -15,6 +15,7 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
   const { pathname } = useLocation();
   const dismissKey = `openclaw-required-dismissed:${pathname}`;
   const configured = !!openclawStatus?.configured;
+  const isLiteEdition = openclawStatus?.edition === 'lite';
   const runtime = resolveOpenClawRuntime(openclawStatus, processStatus);
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState(() => sessionStorage.getItem(dismissKey) === '1');
@@ -40,6 +41,11 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
   }, [dismissKey]);
 
   useEffect(() => {
+    if (isLiteEdition) {
+      setInstallBlocked(true);
+      setInstallBlockedMessage('Lite 版已内置 OpenClaw；若当前未就绪，请检查内置 runtime 是否完整或重新安装 Lite。');
+      return;
+    }
     let active = true;
     getOpenClawInstallPrerequisiteStatus().then(status => {
       if (!active) return;
@@ -53,7 +59,7 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
       setInstallBlockedMessage('');
     });
     return () => { active = false; };
-  }, []);
+  }, [isLiteEdition]);
 
   if (configured && runtime.healthy) return <>{children}</>;
 
@@ -91,6 +97,7 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
   const handleInstall = async () => {
     setInstalling(true);
     try {
+      if (isLiteEdition) return;
       const status = await ensureOpenClawInstallPrerequisites();
       if (status.requiresManualInstall) {
         setInstallBlocked(true);
@@ -130,12 +137,12 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
               className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all"
             >
               {installing ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-              {installing ? '安装中...' : '一键安装 OpenClaw'}
+              {installing ? '安装中...' : (isLiteEdition ? 'Lite 已内置 OpenClaw' : '安装 OpenClaw')}
             </button>
             {installBlocked && (
               <>
-                <button onClick={() => window.open(nodeUrl, '_blank', 'noopener,noreferrer')} className="px-4 py-2 text-xs font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Node.js</button>
-                <button onClick={() => window.open(gitUrl, '_blank', 'noopener,noreferrer')} className="px-4 py-2 text-xs font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Git</button>
+                 {!isLiteEdition && <button onClick={() => window.open(nodeUrl, '_blank', 'noopener,noreferrer')} className="px-4 py-2 text-xs font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Node.js</button>}
+                 {!isLiteEdition && <button onClick={() => window.open(gitUrl, '_blank', 'noopener,noreferrer')} className="px-4 py-2 text-xs font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Git</button>}
               </>
             )}
             <button
@@ -171,22 +178,24 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
             <Brain size={28} className="text-amber-600 dark:text-amber-400" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white">需要安装或配置 OpenClaw</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              此功能需要 OpenClaw。你可以先安装或配置，也可以先关闭提示继续查看页面。
-            </p>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white">{isLiteEdition ? 'Lite 内置 OpenClaw 未就绪' : '需要安装或配置 OpenClaw'}</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                {isLiteEdition
+                  ? 'Lite 版默认自带 OpenClaw。若当前仍不可用，请检查安装包是否完整，或重新安装 Lite。'
+                  : '此功能依赖 OpenClaw AI 引擎。你可以先安装 / 配置，也可以先关闭提示继续调试页面结构。'}
+              </p>
             {installBlockedMessage && <p className="text-xs text-amber-600 dark:text-amber-300 mt-3 leading-5">{installBlockedMessage}</p>}
           </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button onClick={handleInstall} disabled={installing || installBlocked}
               className="page-modern-accent inline-flex items-center justify-center gap-2 px-6 py-3 text-sm disabled:opacity-50">
               {installing ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-              {installing ? '安装中...' : '安装 OpenClaw'}
+              {installing ? '安装中...' : (isLiteEdition ? 'Lite 已内置 OpenClaw' : '一键安装 OpenClaw')}
             </button>
             {installBlocked && (
               <>
-                <button onClick={() => window.open(nodeUrl, '_blank', 'noopener,noreferrer')} className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Node.js</button>
-                <button onClick={() => window.open(gitUrl, '_blank', 'noopener,noreferrer')} className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Git</button>
+                {!isLiteEdition && <button onClick={() => window.open(nodeUrl, '_blank', 'noopener,noreferrer')} className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Node.js</button>}
+                {!isLiteEdition && <button onClick={() => window.open(gitUrl, '_blank', 'noopener,noreferrer')} className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors">下载 Git</button>}
               </>
             )}
             <button
