@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ACCEL_BASE="http://39.102.53.188:16198/clawpanel"
-VERSION=${VERSION:-0.1.3}
+VERSION=${VERSION:-0.1.4}
 BUNDLE_PATH=${1:-}
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT

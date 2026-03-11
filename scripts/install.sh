@@ -14,9 +14,11 @@ INSTALL_DIR="/opt/clawpanel"
 SERVICE_NAME="clawpanel"
 BINARY_NAME="clawpanel"
 REPO="zhaoxinyi02/ClawPanel"
+TAG_PREFIX="pro-v"
+GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
 PORT="19527"
 ACCEL_BASE="http://39.102.53.188:16198/clawpanel"
-DEFAULT_VERSION="5.2.2"
+DEFAULT_VERSION="5.2.8"
 UPDATE_META="${UPDATE_META:-update-pro.json}"
 
 # ==================== 自动获取最新版本 ====================
@@ -24,27 +26,16 @@ get_latest_version() {
     local ver=""
     local tag=""
     if command -v curl &>/dev/null; then
-        tag=$(curl -fsSL "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | \
-              awk -F'"' '/"latest_version"/ {print $4; exit}')
-        if [ -n "$tag" ]; then
-            echo "${tag:-$DEFAULT_VERSION}"
-            return
-        fi
-        tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | \
-              awk -F'"' '/"tag_name"/ {print $4; exit}')
+        tag=$(curl -fsSL "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | awk -F'"' '/"latest_version"/ {print $4; exit}')
+        if [ -n "$tag" ]; then echo "${tag:-$DEFAULT_VERSION}"; return; fi
+        tag=$(curl -fsSL "${GITHUB_RELEASES_API}" 2>/dev/null | awk -v prefix="$TAG_PREFIX" -F'"' '$2=="tag_name" && index($4,prefix)==1 {print $4; exit}')
     elif command -v wget &>/dev/null; then
-        tag=$(wget -qO- "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | \
-              awk -F'"' '/"latest_version"/ {print $4; exit}')
-        if [ -n "$tag" ]; then
-            echo "${tag:-$DEFAULT_VERSION}"
-            return
-        fi
-        tag=$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | \
-              awk -F'"' '/"tag_name"/ {print $4; exit}')
+        tag=$(wget -qO- "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | awk -F'"' '/"latest_version"/ {print $4; exit}')
+        if [ -n "$tag" ]; then echo "${tag:-$DEFAULT_VERSION}"; return; fi
+        tag=$(wget -qO- "${GITHUB_RELEASES_API}" 2>/dev/null | awk -v prefix="$TAG_PREFIX" -F'"' '$2=="tag_name" && index($4,prefix)==1 {print $4; exit}')
     fi
 
-    # Normalize tag: v5.0.24 -> 5.0.24
-    ver="${tag#v}"
+    ver="${tag#${TAG_PREFIX}}"
 
     # Safety: only accept digits/dots/dashes in version
     if [[ ! "$ver" =~ ^[0-9][0-9A-Za-z._-]*$ ]]; then
@@ -55,6 +46,76 @@ get_latest_version() {
 }
 
 VERSION=$(get_latest_version)
+
+normalize_source() {
+  case "${1:-}" in
+    github) echo "github" ;;
+    accel) echo "accel" ;;
+    *) echo "" ;;
+  esac
+}
+
+other_source() {
+  case "$1" in
+    github) echo "accel" ;;
+    *) echo "github" ;;
+  esac
+}
+
+choose_download_source() {
+  DOWNLOAD_SOURCE=$(normalize_source "${DOWNLOAD_SOURCE:-}")
+  if [ -n "$DOWNLOAD_SOURCE" ]; then
+    return
+  fi
+  echo -e "${CYAN}[ClawPanel]${NC} 请选择下载线路："
+  echo -e "  ${BOLD}1) GitHub${NC}      中国香港及境外服务器推荐"
+  echo -e "  ${BOLD}2) 加速服务器${NC}  中国大陆服务器推荐，更稳当一些"
+  if [ -t 0 ]; then
+    read -r -p "请输入 [1/2]（默认 2）: " source_choice
+    case "$source_choice" in
+      1) DOWNLOAD_SOURCE="github" ;;
+      2|"") DOWNLOAD_SOURCE="accel" ;;
+      *) DOWNLOAD_SOURCE="accel" ;;
+    esac
+  else
+    DOWNLOAD_SOURCE="accel"
+  fi
+}
+
+download_file() {
+  local url="$1"
+  local dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 --retry-connrefused -fL "$url" -o "$dest"
+  else
+    wget -T 300 --tries=2 -O "$dest" "$url"
+  fi
+}
+
+download_with_selected_source() {
+  local primary="$1"
+  local binary_file="$2"
+  local dest="$3"
+  local primary_url secondary_url secondary
+  secondary=$(other_source "$primary")
+  if [ "$primary" = "github" ]; then
+    primary_url="https://github.com/${REPO}/releases/download/${TAG_PREFIX}${VERSION}/${binary_file}"
+    secondary_url="${ACCEL_BASE}/releases/${binary_file}"
+  else
+    primary_url="${ACCEL_BASE}/releases/${binary_file}"
+    secondary_url="https://github.com/${REPO}/releases/download/${TAG_PREFIX}${VERSION}/${binary_file}"
+  fi
+  if download_file "$primary_url" "$dest"; then
+    DOWNLOAD_SOURCE_ACTUAL="$primary"
+    return 0
+  fi
+  warn "${primary} 下载失败，切换到 ${secondary}..."
+  if download_file "$secondary_url" "$dest"; then
+    DOWNLOAD_SOURCE_ACTUAL="$secondary"
+    return 0
+  fi
+  return 1
+}
 
 # ==================== 颜色定义 ====================
 RED='\033[31m'
@@ -206,6 +267,8 @@ main() {
     fi
     echo ""
 
+    choose_download_source
+
     # ---- Step 1: 创建目录 ----
     step 1 $TOTAL_STEPS "创建安装目录..."
     mkdir -p "${INSTALL_DIR}"
@@ -214,19 +277,12 @@ main() {
 
     # ---- Step 2: 下载二进制 ----
     step 2 $TOTAL_STEPS "下载 ClawPanel v${VERSION}..."
-    local MIRROR_URL="${ACCEL_BASE}/releases/${BINARY_FILE}"
-    local FALLBACK_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${BINARY_FILE}"
-    info "主下载地址: ${MIRROR_URL}"
-
-    if command -v curl &>/dev/null; then
-        curl -fSL --progress-bar -o "${INSTALL_DIR}/${BINARY_NAME}" "${MIRROR_URL}" || \
-        curl -fSL --progress-bar -o "${INSTALL_DIR}/${BINARY_NAME}" "${FALLBACK_URL}" || err "下载失败！请检查网络连接。"
-    elif command -v wget &>/dev/null; then
-        wget --show-progress -q -O "${INSTALL_DIR}/${BINARY_NAME}" "${MIRROR_URL}" || \
-        wget --show-progress -q -O "${INSTALL_DIR}/${BINARY_NAME}" "${FALLBACK_URL}" || err "下载失败！请检查网络连接。"
+    if [ "$DOWNLOAD_SOURCE" = "github" ]; then
+        info "已选择 GitHub（中国香港及境外服务器推荐），失败时自动回退到加速服务器。"
     else
-        err "系统缺少 curl 或 wget，请先安装：apt install curl 或 yum install curl"
+        info "已选择加速服务器（中国大陆服务器推荐），失败时自动回退到 GitHub。"
     fi
+    download_with_selected_source "$DOWNLOAD_SOURCE" "$BINARY_FILE" "${INSTALL_DIR}/${BINARY_NAME}" || err "下载失败！请检查网络连接。"
 
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     if [ "$SERVICE_USER" != "root" ]; then
@@ -234,7 +290,7 @@ main() {
         err "无法将安装目录授权给 ${SERVICE_USER}:${SERVICE_GROUP}，请检查用户/组权限后重试。"
     fi
     local FILE_SIZE=$(du -h "${INSTALL_DIR}/${BINARY_NAME}" | awk '{print $1}')
-    log "下载完成 (${FILE_SIZE})"
+    log "下载完成 (${FILE_SIZE}) · 线路: ${DOWNLOAD_SOURCE_ACTUAL}"
 
     # ---- Step 3: 注册系统服务 ----
     step 3 $TOTAL_STEPS "注册系统服务（开机自启动）..."

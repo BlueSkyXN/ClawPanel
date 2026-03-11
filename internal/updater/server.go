@@ -1,6 +1,8 @@
 package updater
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -357,7 +359,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(updaterHTML(s.currentVersion, token, s.panelPort)))
+	w.Write([]byte(updaterHTML(s.currentVersion, token, s.panelPort, s.editionCfg.Edition)))
 }
 
 func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
@@ -382,7 +384,8 @@ func (s *Server) handleCheckVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, source, err := s.fetchLatestVersion()
+	preferredSource := normalizeDownloadSource(r.URL.Query().Get("source"))
+	info, source, err := s.fetchLatestVersion(preferredSource)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"ok": false, "error": err.Error(),
@@ -394,15 +397,18 @@ func (s *Server) handleCheckVersion(w http.ResponseWriter, r *http.Request) {
 		isNewerVersion(info.LatestVersion, s.currentVersion)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":             true,
-		"currentVersion": s.currentVersion,
-		"latestVersion":  info.LatestVersion,
-		"releaseTime":    info.ReleaseTime,
-		"releaseNote":    info.ReleaseNote,
-		"hasUpdate":      hasUpdate,
-		"source":         source,
-		"majorChange":    info.MajorChange,
-		"changeWarning":  info.ChangeWarning,
+		"ok":              true,
+		"currentVersion":  s.currentVersion,
+		"latestVersion":   info.LatestVersion,
+		"releaseTime":     info.ReleaseTime,
+		"releaseNote":     info.ReleaseNote,
+		"hasUpdate":       hasUpdate,
+		"source":          source,
+		"preferredSource": preferredSource,
+		"edition":         s.editionCfg.Edition,
+		"fullPackage":     s.editionCfg.isLiteFullPackage(),
+		"majorChange":     info.MajorChange,
+		"changeWarning":   info.ChangeWarning,
 	})
 }
 
@@ -435,7 +441,8 @@ func (s *Server) handleStartUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	go s.doUpdate("")
+	preferredSource := normalizeDownloadSource(r.URL.Query().Get("source"))
+	go s.doUpdate(preferredSource)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
@@ -463,8 +470,8 @@ func (s *Server) handleUploadUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	// Parse multipart (max 200MB)
-	r.ParseMultipartForm(200 << 20)
+	// Parse multipart (max 512MB, Lite full package may exceed 200MB)
+	r.ParseMultipartForm(512 << 20)
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -478,7 +485,9 @@ func (s *Server) handleUploadUpdate(w http.ResponseWriter, r *http.Request) {
 	tmpDir := filepath.Join(s.dataDir, "update-tmp")
 	os.MkdirAll(tmpDir, 0755)
 	tmpFile := filepath.Join(tmpDir, "clawpanel-upload")
-	if runtime.GOOS == "windows" {
+	if s.editionCfg.isLiteFullPackage() {
+		tmpFile += ".tar.gz"
+	} else if runtime.GOOS == "windows" {
 		tmpFile += ".exe"
 	}
 
@@ -897,7 +906,8 @@ func (s *Server) doUpdate(preferredSource string) {
 	// Step 2: Check version
 	s.setStep(1, "running", "正在检测最新版本...")
 	s.logMsg("🔍 检测最新版本...")
-	info, source, err := s.fetchLatestVersion()
+	preferredSource = normalizeDownloadSource(preferredSource)
+	info, source, err := s.fetchLatestVersion(preferredSource)
 	if err != nil {
 		s.setStepError(1, "检测版本失败: "+err.Error())
 		s.setError("检测版本失败: " + err.Error())
@@ -945,7 +955,9 @@ func (s *Server) doUpdate(preferredSource string) {
 	tmpDir := filepath.Join(s.dataDir, "update-tmp")
 	os.MkdirAll(tmpDir, 0755)
 	tmpFile := filepath.Join(tmpDir, "clawpanel-new")
-	if runtime.GOOS == "windows" {
+	if s.editionCfg.isLiteFullPackage() {
+		tmpFile += ".tar.gz"
+	} else if runtime.GOOS == "windows" {
 		tmpFile += ".exe"
 	}
 
@@ -955,18 +967,15 @@ func (s *Server) doUpdate(preferredSource string) {
 		s.logMsg("⚠️ %s 线路下载失败: %v, 尝试备用线路...", source, err)
 		fallbackURL := ""
 		fallbackSource := ""
-		if source == "github" {
-			// Try accel
-			if urls, ok := info.DownloadURLs[platformKey]; ok {
-				fallbackURL = urls
-				fallbackSource = "accel"
+		for _, candidate := range downloadSourceOrder(source) {
+			if candidate == source {
+				continue
 			}
-		} else {
-			// Try GitHub
-			fallbackInfo, ferr := s.fetchFromGitHub()
+			fallbackInfo, ferr := s.fetchVersionFromSource(candidate)
 			if ferr == nil {
 				fallbackURL = fallbackInfo.DownloadURLs[platformKey]
-				fallbackSource = "github"
+				fallbackSource = candidate
+				break
 			}
 		}
 		if fallbackURL != "" {
@@ -1058,6 +1067,11 @@ func (s *Server) doUpdateWithFile(tmpFile string) {
 }
 
 func (s *Server) doReplace(tmpFile string) {
+	if s.editionCfg.isLiteFullPackage() {
+		s.doReplaceLitePackage(tmpFile)
+		return
+	}
+
 	// Step 5: Backup
 	s.setStep(4, "running", "正在备份当前程序...")
 	s.logMsg("💾 备份当前程序...")
@@ -1180,6 +1194,110 @@ func (s *Server) doReplace(tmpFile string) {
 	s.recordUpdateLog()
 }
 
+func (s *Server) doReplaceLitePackage(tmpFile string) {
+	installDir := filepath.Dir(s.panelBin)
+	tmpDir := filepath.Dir(tmpFile)
+	extractDir := filepath.Join(tmpDir, "extract")
+	backupDir := filepath.Join(tmpDir, "backup")
+
+	s.setStep(4, "running", "正在校验并备份 Lite 运行环境...")
+	s.logMsg("📦 校验 Lite 整包结构...")
+	if err := os.RemoveAll(extractDir); err != nil {
+		s.setStepError(4, "清理临时目录失败: "+err.Error())
+		s.setError("清理临时目录失败: " + err.Error())
+		return
+	}
+	if err := extractTarGz(tmpFile, extractDir); err != nil {
+		s.setStepError(4, "解压 Lite 整包失败: "+err.Error())
+		s.setError("解压 Lite 整包失败: " + err.Error())
+		return
+	}
+	if err := validateLitePackage(extractDir); err != nil {
+		s.setStepError(4, "Lite 整包校验失败: "+err.Error())
+		s.setError("Lite 整包校验失败: " + err.Error())
+		return
+	}
+	if err := os.RemoveAll(backupDir); err != nil {
+		s.setStepError(4, "清理备份目录失败: "+err.Error())
+		s.setError("清理备份目录失败: " + err.Error())
+		return
+	}
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		s.setStepError(4, "创建备份目录失败: "+err.Error())
+		s.setError("创建备份目录失败: " + err.Error())
+		return
+	}
+	for _, name := range []string{s.editionCfg.BinaryName, "bin", "runtime"} {
+		src := filepath.Join(installDir, name)
+		if _, err := os.Stat(src); err == nil {
+			if err := os.Rename(src, filepath.Join(backupDir, name)); err != nil {
+				s.setStepError(4, "备份当前安装失败: "+err.Error())
+				s.setError("备份当前安装失败: " + err.Error())
+				return
+			}
+		}
+	}
+	s.setStep(4, "done", "Lite 运行环境已完成备份")
+	s.setProgress(70)
+
+	s.setStep(5, "running", "正在替换 Lite 面板与内置运行环境...")
+	s.logMsg("🔄 替换 Lite 面板与 runtime...")
+	applyErr := applyLitePackage(extractDir, installDir, s.editionCfg.BinaryName)
+	if applyErr != nil {
+		s.logMsg("❌ 替换失败，尝试回滚: %v", applyErr)
+		_ = rollbackLitePackage(backupDir, installDir, s.editionCfg.BinaryName)
+		s.setStepError(5, "替换失败，已回滚: "+applyErr.Error())
+		s.setError("替换失败，已回滚: " + applyErr.Error())
+		_ = s.startPanel()
+		return
+	}
+	if err := os.Chmod(s.panelBin, 0755); err == nil {
+		_ = os.Chmod(filepath.Join(installDir, "bin", "clawlite-openclaw"), 0755)
+	}
+	s.setStep(5, "done", "Lite 面板与运行环境替换完成")
+	s.logMsg("✅ Lite 面板与运行环境替换完成")
+	s.setProgress(85)
+
+	os.Remove(tmpFile)
+
+	s.setStep(6, "running", "正在启动 ClawPanel Lite...")
+	s.logMsg("🚀 启动 ClawPanel Lite...")
+	if err := s.startPanel(); err != nil {
+		s.logMsg("❌ 启动失败: %v, 尝试回滚...", err)
+		_ = rollbackLitePackage(backupDir, installDir, s.editionCfg.BinaryName)
+		_ = s.startPanel()
+		s.setStepError(6, "启动失败，已回滚: "+err.Error())
+		s.setError("启动失败，已回滚: " + err.Error())
+		s.setPhase("rolled_back")
+		return
+	}
+
+	time.Sleep(3 * time.Second)
+	if !s.isPanelRunning() || !s.isLiteRuntimeReady() {
+		s.logMsg("❌ Lite 更新后健康检查失败，尝试回滚...")
+		_ = exec.Command("systemctl", "stop", s.editionCfg.ServiceName).Run()
+		_ = rollbackLitePackage(backupDir, installDir, s.editionCfg.BinaryName)
+		_ = s.startPanel()
+		s.setStepError(6, "健康检查失败，已回滚")
+		s.setPhase("rolled_back")
+		return
+	}
+
+	_ = os.RemoveAll(backupDir)
+	_ = os.RemoveAll(tmpDir)
+	s.setStep(6, "done", "ClawPanel Lite 已启动")
+	s.logMsg("✅ ClawPanel Lite 已启动")
+	s.setProgress(100)
+
+	s.mu.Lock()
+	s.state.Phase = "done"
+	s.state.Message = "更新完成！"
+	s.state.FinishedAt = time.Now().Format(time.RFC3339)
+	s.mu.Unlock()
+	s.logMsg("🎉 Lite 整包更新完成！")
+	s.recordUpdateLog()
+}
+
 func (s *Server) stopPanel() error {
 	if runtime.GOOS == "windows" {
 		// Try service stop first
@@ -1220,11 +1338,11 @@ func (s *Server) stopPanel() error {
 			time.Sleep(2 * time.Second)
 		} else {
 			if commandExists("systemctl") {
-				exec.Command("systemctl", "stop", "clawpanel").Run()
+				exec.Command("systemctl", "stop", s.editionCfg.ServiceName).Run()
 				time.Sleep(3 * time.Second)
 				// If systemd service is still active, wait a bit more
 				for i := 0; i < 5; i++ {
-					out, _ := exec.Command("systemctl", "is-active", "clawpanel").Output()
+					out, _ := exec.Command("systemctl", "is-active", s.editionCfg.ServiceName).Output()
 					if strings.TrimSpace(string(out)) != "active" {
 						break
 					}
@@ -1324,17 +1442,27 @@ func killPanelProcessesExceptUpdater(selfPID, parentPID int) error {
 	return nil
 }
 
-func (s *Server) fetchLatestVersion() (*VersionInfo, string, error) {
-	info, err := s.fetchFromGitHub()
-	if err == nil {
-		return info, "github", nil
+func (s *Server) fetchLatestVersion(preferredSource string) (*VersionInfo, string, error) {
+	var errs []string
+	for _, source := range downloadSourceOrder(preferredSource) {
+		info, err := s.fetchVersionFromSource(source)
+		if err == nil {
+			return info, source, nil
+		}
+		errMsg := fmt.Sprintf("%s: %v", source, err)
+		errs = append(errs, errMsg)
+		log.Printf("[Updater] %s 线路请求失败: %v", source, err)
 	}
-	log.Printf("[Updater] GitHub 请求失败: %v, 尝试加速服务器...", err)
-	info, err = s.fetchFromAccel()
-	if err == nil {
-		return info, "accel", nil
+	return nil, "", fmt.Errorf("所有线路均失败: %s", strings.Join(errs, "; "))
+}
+
+func (s *Server) fetchVersionFromSource(source string) (*VersionInfo, error) {
+	switch normalizeDownloadSource(source) {
+	case "accel":
+		return s.fetchFromAccel()
+	default:
+		return s.fetchFromGitHub()
 	}
-	return nil, "", fmt.Errorf("所有线路均失败: %v", err)
 }
 
 func (s *Server) fetchFromAccel() (*VersionInfo, error) {
@@ -1388,7 +1516,7 @@ func (s *Server) fetchFromGitHub() (*VersionInfo, error) {
 			SHA256:        map[string]string{},
 		}
 		for _, a := range release.Assets {
-			if platformKey, ok := s.editionCfg.matchBinaryAsset(info.LatestVersion, a.Name); ok {
+			if platformKey, ok := s.editionCfg.matchUpdateAsset(info.LatestVersion, a.Name); ok {
 				info.DownloadURLs[platformKey] = a.URL
 			}
 		}
@@ -1603,6 +1731,141 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+func normalizeDownloadSource(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "github":
+		return "github"
+	case "accel":
+		return "accel"
+	default:
+		return ""
+	}
+}
+
+func downloadSourceOrder(preferred string) []string {
+	switch normalizeDownloadSource(preferred) {
+	case "accel":
+		return []string{"accel", "github"}
+	case "github":
+		return []string{"github", "accel"}
+	default:
+		return []string{"github", "accel"}
+	}
+}
+
+func extractTarGz(src, dest string) error {
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return err
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+	tr := tar.NewReader(gzr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		name := strings.TrimPrefix(hdr.Name, "./")
+		if name == "" || strings.Contains(name, "..") {
+			continue
+		}
+		target := filepath.Join(dest, name)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dest)+string(os.PathSeparator)) && filepath.Clean(target) != filepath.Clean(dest) {
+			return fmt.Errorf("非法归档路径: %s", hdr.Name)
+		}
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return err
+			}
+			if err := out.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateLitePackage(root string) error {
+	required := []string{
+		"clawpanel-lite",
+		filepath.Join("bin", "clawlite-openclaw"),
+		"runtime",
+		filepath.Join("runtime", "openclaw"),
+	}
+	for _, rel := range required {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			return fmt.Errorf("缺少 %s", rel)
+		}
+	}
+	return nil
+}
+
+func applyLitePackage(extractDir, installDir, binaryName string) error {
+	for _, name := range []string{binaryName, "bin", "runtime"} {
+		src := filepath.Join(extractDir, name)
+		if _, err := os.Stat(src); err != nil {
+			return err
+		}
+		dst := filepath.Join(installDir, name)
+		_ = os.RemoveAll(dst)
+		if err := os.Rename(src, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rollbackLitePackage(backupDir, installDir, binaryName string) error {
+	for _, name := range []string{binaryName, "bin", "runtime"} {
+		dst := filepath.Join(installDir, name)
+		_ = os.RemoveAll(dst)
+		src := filepath.Join(backupDir, name)
+		if _, err := os.Stat(src); err == nil {
+			if err := os.Rename(src, dst); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) isLiteRuntimeReady() bool {
+	if !s.editionCfg.isLiteFullPackage() {
+		return true
+	}
+	cmd := exec.Command(filepath.Join(filepath.Dir(s.panelBin), "bin", "clawlite-openclaw"), "--version")
+	cmd.Env = os.Environ()
+	cmd.Dir = filepath.Dir(s.panelBin)
+	return cmd.Run() == nil
 }
 
 func ternary(cond bool, a, b string) string {

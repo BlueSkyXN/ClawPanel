@@ -44,9 +44,9 @@ func TestGenerateTokenAndValidateToken(t *testing.T) {
 }
 
 func TestUpdaterHTMLIncludesInjectedValues(t *testing.T) {
-	html := updaterHTML("v1.0.0", "test-token", 19527)
+	html := updaterHTML("v1.0.0", "test-token", 19527, "lite")
 
-	for _, want := range []string{"ClawPanel 更新工具", "v1.0.0", "test-token", "19527"} {
+	for _, want := range []string{"ClawPanel 更新工具", "v1.0.0", "test-token", "19527", "lite"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("updaterHTML() missing %q", want)
 		}

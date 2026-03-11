@@ -1647,6 +1647,7 @@ function PanelUpdateSection() {
       <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
         <Box size={16} className="text-blue-500" /> {edition === 'lite' ? 'ClawPanel Lite 版本更新' : 'ClawPanel 版本更新'}
         <span className="text-[10px] font-mono text-gray-400 bg-gray-100 dark:bg-gray-900 px-2 py-0.5 rounded ml-1">{panelVersion || '...'}</span>
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${edition === 'lite' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'}`}>{edition === 'lite' ? 'Lite 版' : 'Pro 版'}</span>
         <span className="text-[10px] text-gray-400 ml-auto">🛡️ 独立更新工具</span>
       </h3>
 
@@ -1656,7 +1657,7 @@ function PanelUpdateSection() {
             <Box size={20} className="text-blue-600 dark:text-blue-300" />
           </div>
           <div>
-            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">当前版本</p>
+            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">当前版本 · {edition === 'lite' ? 'Lite' : 'Pro'}</p>
             <p className="text-base font-bold text-gray-900 dark:text-white font-mono mt-0.5">{panelVersion || '加载中...'}</p>
           </div>
         </div>
@@ -1722,7 +1723,7 @@ function PanelUpdateSection() {
           {edition === 'lite' && (
             <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 text-xs text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-900/30">
               <Shield size={14} className="shrink-0" />
-              <span>Lite 面板内更新默认下载当前发行形态对应的面板更新包，不会覆盖你的现有数据目录与通道配置。</span>
+              <span>Lite 面板内更新会下载当前版本对应的整包，自动同步面板、内置 OpenClaw 与预置插件，同时保留你的现有 data 目录与通道配置。</span>
             </div>
           )}
           <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">

@@ -380,7 +380,7 @@ func (u *Updater) fetchFromGitHub() (*UpdateInfo, error) {
 			SHA256:        map[string]string{},
 		}
 		for _, a := range release.Assets {
-			if platformKey, ok := u.cfg.matchBinaryAsset(info.LatestVersion, a.Name); ok {
+			if platformKey, ok := u.cfg.matchUpdateAsset(info.LatestVersion, a.Name); ok {
 				info.DownloadURLs[platformKey] = a.URL
 			}
 		}

@@ -1,9 +1,9 @@
 {
-  "latest_version": "0.1.3",
-  "release_time": "2026-03-10T22:15:00+08:00",
-  "release_note": "## ClawPanel Lite v0.1.3\n\n- 修复“前往更新”跳转后更新页面不可用的问题\n- 升级完成后版本页会更及时刷新当前版本显示\n- Lite 文档、安装脚本与更新元数据同步更新到 0.1.3",
+  "latest_version": "0.1.4",
+  "release_time": "2026-03-11T01:10:00+08:00",
+  "release_note": "## ClawPanel Lite v0.1.4\n\n- Lite 面板内更新改为整包更新，自动同步面板、内置 OpenClaw 与预置插件\n- 安装与更新新增 GitHub / 加速服务器线路选择，并给出地域建议\n- 版本管理页面现在会明确显示当前是 Lite 版还是 Pro 版",
   "download_urls": {
-    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-lite-core-v0.1.3-linux-amd64.tar.gz"
+    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-lite-core-v0.1.4-linux-amd64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""

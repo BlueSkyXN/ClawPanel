@@ -10,7 +10,9 @@
 $ErrorActionPreference = "Stop"
 
 $REPO = "zhaoxinyi02/ClawPanel"
+$TAG_PREFIX = "pro-v"
 $ACCEL_BASE = "http://39.102.53.188:16198/clawpanel"
+$ACCEL_META = "$ACCEL_BASE/update-pro.json"
 $INSTALL_DIR = "C:\ClawPanel"
 $SERVICE_NAME = "ClawPanel"
 $PORT = "19527"
@@ -19,7 +21,7 @@ $PORT = "19527"
 Write-Host "  [ClawPanel] 获取最新版本信息..." -ForegroundColor Cyan
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $releaseInfo = Invoke-RestMethod -Uri "$ACCEL_BASE/update.json" -UseBasicParsing
+    $releaseInfo = Invoke-RestMethod -Uri $ACCEL_META -UseBasicParsing
     $tag = [string]$releaseInfo.latest_version
     if ([string]::IsNullOrWhiteSpace($tag)) {
         throw "empty latest_version"
@@ -32,11 +34,11 @@ try {
 } catch {
     Write-Host "  [ClawPanel] 无法获取最新版本，使用默认版本..." -ForegroundColor Yellow
     try {
-        $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases/latest" -UseBasicParsing
-        $tag = [string]$releaseInfo.tag_name
-        $VERSION = $tag -replace '^v', ''
+        $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases?per_page=20" -UseBasicParsing
+        $tag = [string](($releaseInfo | Where-Object { $_.tag_name -like "$TAG_PREFIX*" } | Select-Object -First 1).tag_name)
+        $VERSION = $tag -replace "^$TAG_PREFIX", ''
     } catch {
-        $VERSION = "5.2.2"
+        $VERSION = "5.2.8"
     }
 }
 

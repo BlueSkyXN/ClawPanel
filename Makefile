@@ -1,4 +1,4 @@
-VERSION := 5.2.7
+VERSION := 5.2.8
 BINARY := clawpanel
 EDITION ?= pro
 APP_NAME ?= $(BINARY)

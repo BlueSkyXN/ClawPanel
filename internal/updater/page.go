@@ -2,7 +2,7 @@ package updater
 
 import "fmt"
 
-func updaterHTML(currentVersion, token string, panelPort int) string {
+func updaterHTML(currentVersion, token string, panelPort int, edition string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -64,6 +64,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .warn-box{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:.75rem;font-size:.75rem;color:var(--amber);display:flex;align-items:flex-start;gap:.5rem;margin-bottom:.75rem}
 .err-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:.75rem;font-size:.75rem;color:var(--red);margin-bottom:.75rem}
 .ok-box{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:.75rem;font-size:.75rem;color:var(--green);margin-bottom:.75rem}
+.source-box{display:grid;gap:.5rem;margin-top:1rem}
+.source-option{display:flex;align-items:flex-start;gap:.75rem;padding:.75rem .9rem;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--border);cursor:pointer;transition:all .15s}
+.source-option:hover{border-color:rgba(124,92,252,.45);background:rgba(124,92,252,.05)}
+.source-option input{margin-top:.15rem}
+.source-title{font-size:.78rem;font-weight:700}
+.source-desc{font-size:.7rem;color:var(--muted);margin-top:.15rem;line-height:1.5}
 .hidden{display:none}
 .footer{text-align:center;margin-top:2rem;color:var(--muted);font-size:.7rem}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(4px)}
@@ -120,6 +126,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           🔍 重新检测
         </button>
       </div>
+      <div id="source-section" class="source-box hidden">
+        <div class="warn-box">🌐 下载线路建议：<span>中国香港及境外服务器推荐 GitHub，中国大陆服务器推荐加速服务器，失败时会自动切换到另一条线路。</span></div>
+        <label class="source-option">
+          <input type="radio" name="download-source" value="github">
+          <div>
+            <div class="source-title">GitHub</div>
+            <div class="source-desc">中国香港及境外服务器推荐；直接从 GitHub Release 下载更新包。</div>
+          </div>
+        </label>
+        <label class="source-option">
+          <input type="radio" name="download-source" value="accel">
+          <div>
+            <div class="source-title">加速服务器</div>
+            <div class="source-desc">中国大陆服务器推荐；更稳地访问北京加速分发节点。</div>
+          </div>
+        </label>
+      </div>
       <div id="upload-section" style="margin-top:1rem">
         <button class="btn btn-upload" id="btn-upload" onclick="document.getElementById('file-input').click()">
           📁 离线更新：上传可执行文件
@@ -168,6 +191,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 const TOKEN = '%s';
 const PANEL_PORT = %d;
 const UPDATER_BASE = window.location.origin;
+const EDITION = '%s';
 const PANEL_URL = window.location.protocol + '//' + window.location.hostname + ':' + PANEL_PORT;
 let pollTimer = null;
 let versionInfo = null;
@@ -197,9 +221,28 @@ const CFG = MODE === 'openclaw' ? {
   productName: 'ClawPanel'
 };
 
+const SOURCE_STORAGE_KEY = 'clawpanel-update-source:' + EDITION + ':' + MODE;
+
+function getSelectedSource() {
+  const checked = document.querySelector('input[name="download-source"]:checked');
+  return checked ? checked.value : (localStorage.getItem(SOURCE_STORAGE_KEY) || 'accel');
+}
+
+function setSelectedSource(value) {
+  const normalized = value === 'github' ? 'github' : 'accel';
+  const radio = document.querySelector('input[name="download-source"][value="' + normalized + '"]');
+  if (radio) radio.checked = true;
+  localStorage.setItem(SOURCE_STORAGE_KEY, normalized);
+}
+
 async function api(path, opts) {
+  const params = new URLSearchParams();
+  params.set('token', TOKEN);
+  if (MODE === 'clawpanel' && (path === CFG.checkApi || path === CFG.startApi)) {
+    params.set('source', getSelectedSource());
+  }
   const sep = path.includes('?') ? '&' : '?';
-  const url = UPDATER_BASE + '/updater/api/' + path + sep + 'token=' + TOKEN;
+  const url = UPDATER_BASE + '/updater/api/' + path + sep + params.toString();
   const resp = await fetch(url, opts);
   return resp.json();
 }
@@ -211,6 +254,20 @@ async function init() {
   document.title = CFG.productName + ' 更新工具';
   if (!CFG.hasUpload) {
     document.getElementById('upload-section').style.display = 'none';
+  }
+  if (MODE === 'clawpanel') {
+    document.getElementById('source-section').classList.remove('hidden');
+    setSelectedSource(localStorage.getItem(SOURCE_STORAGE_KEY) || 'accel');
+    document.querySelectorAll('input[name="download-source"]').forEach(function(el){
+      el.addEventListener('change', function(){
+        setSelectedSource(el.value);
+        checkVersion();
+      });
+    });
+    if (EDITION === 'lite') {
+      document.getElementById('btn-upload').innerHTML = '📁 离线更新：上传 Lite 整包<span style="font-size:.65rem;color:var(--muted)">支持上传 .tar.gz，保留现有 data 目录</span>';
+      document.getElementById('file-input').setAttribute('accept', '.tar.gz,.tgz,*');
+    }
   }
 
   // Validate token
@@ -242,6 +299,7 @@ async function checkVersion() {
     if (r.hasUpdate) {
       document.getElementById('ver-status').innerHTML = '<div class="warn-box">⬆️ 发现新版本！当前 ' + r.currentVersion + ' → ' + r.latestVersion + (r.source ? ' <span class="badge badge-src" style="margin-left:4px">' + r.source + '</span>' : '') + '</div>';
       document.getElementById('btn-update').disabled = false;
+      document.getElementById('btn-update').textContent = '🔄 开始更新';
     } else {
       document.getElementById('ver-status').innerHTML = '<div class="ok-box">✅ 当前已是最新版本</div>';
       // Still allow force update
@@ -267,6 +325,10 @@ function confirmUpdate() {
     t = '确定要从 ' + versionInfo.currentVersion + ' 更新到 ' + versionInfo.latestVersion + ' 吗？';
     if (MODE === 'clawpanel') t += '\\n\\n更新过程中 ClawPanel 面板服务将暂时停止。';
     if (MODE === 'openclaw') t += '\\n\\n将执行 openclaw update 命令。';
+  }
+  if (MODE === 'clawpanel') {
+    t += '\\n\\n下载线路：' + (getSelectedSource() === 'github' ? 'GitHub' : '加速服务器');
+    if (EDITION === 'lite') t += '\\n本次将整包更新 Lite（面板 + 内置 OpenClaw + 预置插件），不会覆盖现有 data 目录。';
   }
   document.getElementById('confirm-text').textContent = t;
   const modal = document.getElementById('confirm-modal');
@@ -401,5 +463,5 @@ window.addEventListener('beforeunload', function(e) {
 init();
 </script>
 </body>
-</html>`, currentVersion, currentVersion, token, panelPort)
+</html>`, currentVersion, currentVersion, token, panelPort, edition)
 }
