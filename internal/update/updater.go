@@ -380,17 +380,8 @@ func (u *Updater) fetchFromGitHub() (*UpdateInfo, error) {
 			SHA256:        map[string]string{},
 		}
 		for _, a := range release.Assets {
-			name := strings.ToLower(a.Name)
-			if strings.Contains(name, "linux") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
-				info.DownloadURLs["linux_amd64"] = a.URL
-			} else if strings.Contains(name, "linux") && strings.Contains(name, "arm64") {
-				info.DownloadURLs["linux_arm64"] = a.URL
-			} else if strings.Contains(name, "darwin") && strings.Contains(name, "amd64") {
-				info.DownloadURLs["darwin_amd64"] = a.URL
-			} else if strings.Contains(name, "darwin") && strings.Contains(name, "arm64") {
-				info.DownloadURLs["darwin_arm64"] = a.URL
-			} else if strings.Contains(name, "windows") && strings.Contains(name, "amd64") && !strings.Contains(name, "setup") {
-				info.DownloadURLs["windows_amd64"] = a.URL
+			if platformKey, ok := u.cfg.matchBinaryAsset(info.LatestVersion, a.Name); ok {
+				info.DownloadURLs[platformKey] = a.URL
 			}
 		}
 		return info, nil
