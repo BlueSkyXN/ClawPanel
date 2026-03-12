@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import type { ChangeEvent } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import {
   Sparkles, Search, ToggleLeft, ToggleRight, Download,
-  RefreshCw, Package, Globe, Check, Loader2, ExternalLink, X, Key, FolderOpen, Plug,
+  RefreshCw, Package, Globe, Check, Loader2, ExternalLink, X, Key, FolderOpen, Plug, Trash2, ArrowUpCircle, CheckSquare, Square, Upload,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import MobileActionTray from '../components/MobileActionTray';
@@ -42,6 +43,22 @@ interface ClawHubSkill {
   category?: string;
   author?: string;
   installed?: boolean;
+}
+
+interface SkillConfigSnapshot {
+  skillId: string;
+  skillKey?: string;
+  configKeys: string[];
+  values: Record<string, unknown>;
+}
+
+interface PendingSkillConfigImport {
+  fileName: string;
+  values: Record<string, unknown>;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function normalizeClawHubRegistryBase(value: unknown): string {
@@ -83,12 +100,34 @@ export default function Skills() {
   const [tab, setTab] = useState<'skills' | 'plugins' | 'clawhub'>('skills');
   const [msg, setMsg] = useState('');
   const [installing, setInstalling] = useState('');
+  const [uninstalling, setUninstalling] = useState('');
+  const [updating, setUpdating] = useState('');
+  const [confirmUninstall, setConfirmUninstall] = useState<{ id: string; name: string } | null>(null);
+  const [detailSkill, setDetailSkill] = useState<any | null>(null);
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
   const [configSkill, setConfigSkill] = useState<SkillEntry | null>(null);
+  const [configSnapshot, setConfigSnapshot] = useState<SkillConfigSnapshot | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configAction, setConfigAction] = useState<'export' | 'import' | ''>('');
+  const [pendingConfigImport, setPendingConfigImport] = useState<PendingSkillConfigImport | null>(null);
+  const [hubCategory, setHubCategory] = useState<string>('all');
+  const [hubPage, setHubPage] = useState(1);
+  const [hubTotal, setHubTotal] = useState(0);
+  const hubLimit = 30;
+  const [depResults, setDepResults] = useState<Record<string, { allMet: boolean; missing: string[] }>>({});
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const configImportRef = useRef<HTMLInputElement>(null);
+
+  const debouncedHubSearch = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { loadClawHub(); }, 300);
+  }, []);
 
   useEffect(() => { loadAgents(); }, []);
   useEffect(() => { loadSkills(); }, [selectedAgent]);
   useEffect(() => { if (tab === 'clawhub') loadClawHub(); }, [tab, selectedAgent]);
+  useEffect(() => { return () => { if (debounceRef.current) clearTimeout(debounceRef.current); }; }, []);
 
   const loadAgents = async () => {
     try {
@@ -117,13 +156,35 @@ export default function Skills() {
     } finally { setLoading(false); }
   };
 
-  const loadClawHub = async () => {
-    setHubLoading(true);
+  const checkDeps = async (skill: any) => {
+    if (!skill.requires) return;
+    const env = skill.requires.env as string[] | undefined;
+    const bins = skill.requires.bins as string[] | undefined;
+    const anyBins = skill.requires.anyBins as string[] | undefined;
+    if (!env?.length && !bins?.length && !anyBins?.length) return;
     try {
-      const r = await api.searchClawHub(search, selectedAgent);
+      const r = await api.checkSkillDeps(env, bins, anyBins);
+      if (r.ok) {
+        const missing: string[] = [];
+        (r.env || []).forEach((e: any) => { if (!e.found) missing.push(`env:${e.name}`); });
+        (r.bins || []).forEach((b: any) => { if (!b.found) missing.push(`bin:${b.name}`); });
+        setDepResults(prev => ({ ...prev, [skill.id]: { allMet: r.allMet, missing } }));
+      }
+    } catch { /* ignore */ }
+  };
+
+  const loadClawHub = async (page?: number) => {
+    setHubLoading(true);
+    const p = page ?? hubPage;
+    try {
+      const r = await api.searchClawHub(search, selectedAgent, p, hubLimit);
       if (r.ok && r.skills) {
         setClawHubSkills(r.skills || []);
         setClawHubRegistryBase(normalizeClawHubRegistryBase(r.registryBase));
+        if (typeof r.total === 'number') setHubTotal(r.total);
+        (r.skills || []).forEach((s: any) => {
+          if (s.requires && !s.installed) checkDeps(s);
+        });
       }
     } catch (err) {
       console.error('Failed to load ClawHub:', err);
@@ -148,6 +209,25 @@ export default function Skills() {
     }
   };
 
+  const bulkToggleSkills = async (enable: boolean) => {
+    if (selectedSkills.size === 0) return;
+    const targets = skills.filter(s => selectedSkills.has(s.skillKey || s.id));
+    setSkills(prev => prev.map(s => selectedSkills.has(s.skillKey || s.id) ? { ...s, enabled: enable } : s));
+    let ok = 0;
+    for (const skill of targets) {
+      try {
+        const key = skill.skillKey || skill.id;
+        const aliases = skill.skillKey && skill.skillKey !== skill.id ? [skill.id] : undefined;
+        await api.toggleSkill(key, enable, aliases);
+        ok++;
+      } catch { /* individual failure handled by reload */ }
+    }
+    setMsg(`${ok}/${targets.length} ${enable ? t.common.enabled : t.common.disabled}`);
+    setTimeout(() => setMsg(''), 2000);
+    setSelectedSkills(new Set());
+    loadSkills();
+  };
+
   const togglePlugin = async (id: string) => {
     const plugin = plugins.find(p => p.id === id);
     if (!plugin) return;
@@ -166,7 +246,8 @@ export default function Skills() {
 
   const handleSearchClawHub = async () => {
     if (tab === 'clawhub') {
-      loadClawHub();
+      setHubPage(1);
+      loadClawHub(1);
     }
   };
 
@@ -191,6 +272,200 @@ export default function Skills() {
     }
   };
 
+  const handleUninstallSkill = async (skillId: string) => {
+    setConfirmUninstall(null);
+    setUninstalling(skillId);
+    try {
+      const r = await api.uninstallSkill(skillId, selectedAgent);
+      if (r.ok) {
+        setMsg(t.skills.uninstallSuccess.replace('{id}', skillId));
+        await loadSkills();
+        if (tab === 'clawhub') await loadClawHub();
+      } else {
+        setMsg(t.skills.uninstallFailed.replace('{id}', skillId));
+      }
+    } catch {
+      setMsg(t.skills.uninstallFailed.replace('{id}', skillId));
+    } finally {
+      setUninstalling('');
+      setTimeout(() => setMsg(''), 3000);
+    }
+  };
+
+  const handleUpdateSkill = async (skillId: string) => {
+    setUpdating(skillId);
+    try {
+      const r = await api.installClawHubSkill(skillId, selectedAgent);
+      if (r.ok) {
+        setMsg(t.skills.updateSuccess.replace('{id}', skillId));
+        await loadSkills();
+        if (tab === 'clawhub') await loadClawHub();
+      } else {
+        setMsg(t.skills.updateFailed.replace('{id}', skillId));
+      }
+    } catch {
+      setMsg(t.skills.updateFailed.replace('{id}', skillId));
+    } finally {
+      setUpdating('');
+      setTimeout(() => setMsg(''), 3000);
+    }
+  };
+
+  const loadSkillConfigSnapshot = useCallback(async (skill: SkillEntry) => {
+    const skillKey = skill.skillKey || skill.id;
+    if (!skillKey) return;
+    setConfigLoading(true);
+    try {
+      const r = await api.getSkillConfig(skillKey, selectedAgent);
+      if (r.ok) {
+        setConfigSnapshot({
+          skillId: r.skillId || skill.id,
+          skillKey: r.skillKey || skillKey,
+          configKeys: Array.isArray(r.configKeys) ? r.configKeys : (skill.requires?.config || []),
+          values: isPlainObject(r.values) ? r.values : {},
+        });
+      } else {
+        setConfigSnapshot({
+          skillId: skill.id,
+          skillKey,
+          configKeys: skill.requires?.config || [],
+          values: {},
+        });
+      }
+    } catch {
+      setConfigSnapshot({
+        skillId: skill.id,
+        skillKey,
+        configKeys: skill.requires?.config || [],
+        values: {},
+      });
+    } finally {
+      setConfigLoading(false);
+    }
+  }, [selectedAgent]);
+
+  const handleExportSkillConfig = async (skill: SkillEntry) => {
+    const skillKey = skill.skillKey || skill.id;
+    if (!skillKey) return;
+    setConfigAction('export');
+    try {
+      const r = await api.getSkillConfig(skillKey, selectedAgent);
+      if (!r.ok) {
+        setMsg(t.skills.configExportFailed.replace('{id}', skill.name));
+      } else {
+        const payload = {
+          exportedAt: new Date().toISOString(),
+          agentId: selectedAgent || '',
+          skillId: r.skillId || skill.id,
+          skillKey: r.skillKey || skillKey,
+          configKeys: Array.isArray(r.configKeys) ? r.configKeys : (skill.requires?.config || []),
+          values: isPlainObject(r.values) ? r.values : {},
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${skillKey}-config-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setMsg(t.skills.configExportSuccess.replace('{id}', skill.name));
+      }
+    } catch {
+      setMsg(t.skills.configExportFailed.replace('{id}', skill.name));
+    } finally {
+      setConfigAction('');
+      setTimeout(() => setMsg(''), 3000);
+    }
+  };
+
+  const handleSkillConfigImportSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !configSkill) return;
+    try {
+      const text = await file.text();
+      const raw = JSON.parse(text) as unknown;
+      const imported = isPlainObject(raw) && isPlainObject(raw.values) ? raw.values : raw;
+      if (!isPlainObject(imported)) {
+        setMsg(t.skills.configImportInvalid);
+        setTimeout(() => setMsg(''), 3000);
+        return;
+      }
+      const importedSkill = isPlainObject(raw)
+        ? (typeof raw.skillKey === 'string' ? raw.skillKey : typeof raw.skillId === 'string' ? raw.skillId : '')
+        : '';
+      const currentSkillKey = configSkill.skillKey || configSkill.id;
+      if (importedSkill && importedSkill !== currentSkillKey && importedSkill !== configSkill.id) {
+        setMsg(t.skills.configImportMismatch.replace('{id}', configSkill.name));
+        setTimeout(() => setMsg(''), 3000);
+        return;
+      }
+      const allowed = new Set(configSkill.requires?.config || []);
+      const unknownKeys = Object.keys(imported).filter(key => !allowed.has(key));
+      if (unknownKeys.length > 0) {
+        setMsg(t.skills.configImportUnknown.replace('{keys}', unknownKeys.join(', ')));
+        setTimeout(() => setMsg(''), 4000);
+        return;
+      }
+      if (Object.keys(imported).length === 0) {
+        setMsg(t.skills.configImportInvalid);
+        setTimeout(() => setMsg(''), 3000);
+        return;
+      }
+      setPendingConfigImport({ fileName: file.name, values: imported });
+    } catch {
+      setMsg(t.skills.configImportInvalid);
+      setTimeout(() => setMsg(''), 3000);
+    }
+  };
+
+  const handleApplySkillConfigImport = async () => {
+    if (!configSkill || !pendingConfigImport) return;
+    const skillKey = configSkill.skillKey || configSkill.id;
+    if (!skillKey) return;
+    setConfigAction('import');
+    try {
+      const r = await api.updateSkillConfig(skillKey, pendingConfigImport.values, selectedAgent);
+      if (r.ok) {
+        setConfigSnapshot({
+          skillId: r.skillId || configSkill.id,
+          skillKey: r.skillKey || skillKey,
+          configKeys: Array.isArray(r.configKeys) ? r.configKeys : (configSkill.requires?.config || []),
+          values: isPlainObject(r.values) ? r.values : {},
+        });
+        setPendingConfigImport(null);
+        setMsg(t.skills.configImportSuccess.replace('{id}', configSkill.name));
+      } else {
+        setMsg((r.error as string) || t.skills.configImportFailed.replace('{id}', configSkill.name));
+      }
+    } catch {
+      setMsg(t.skills.configImportFailed.replace('{id}', configSkill.name));
+    } finally {
+      setConfigAction('');
+      setTimeout(() => setMsg(''), 3000);
+    }
+  };
+
+  useEffect(() => {
+    if (!configSkill) {
+      setConfigSnapshot(null);
+      setPendingConfigImport(null);
+      setConfigAction('');
+      return;
+    }
+    if (!configSkill.requires?.config?.length) {
+      setConfigSnapshot({
+        skillId: configSkill.id,
+        skillKey: configSkill.skillKey || configSkill.id,
+        configKeys: [],
+        values: {},
+      });
+      setPendingConfigImport(null);
+      return;
+    }
+    void loadSkillConfigSnapshot(configSkill);
+  }, [configSkill, loadSkillConfigSnapshot]);
+
   const filtered = skills.filter(s => {
     if (filter === 'enabled' && !s.enabled) return false;
     if (filter === 'disabled' && s.enabled) return false;
@@ -202,10 +477,12 @@ export default function Skills() {
   });
 
   const hubFiltered = clawHubSkills.filter(s => {
+    if (hubCategory !== 'all' && (s.category || '') !== hubCategory) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return s.id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
   });
+  const hubCategories = Array.from(new Set(clawHubSkills.map(s => s.category).filter(Boolean) as string[])).sort();
   const clawHubSiteUrl = buildClawHubLink(clawHubRegistryBase, '/skills?sort=downloads');
 
   const getSourceBadge = (source: string) => {
@@ -289,7 +566,16 @@ export default function Skills() {
             </div>
           </div>
 
-          {/* Skills list */}
+          {/* Bulk actions bar */}
+          {selectedSkills.size > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800/40">
+              <span className="text-xs font-medium text-violet-700 dark:text-violet-300">{t.skills.bulkSelected.replace('{n}', String(selectedSkills.size))}</span>
+              <div className="flex-1" />
+              <button onClick={() => bulkToggleSkills(true)} className="px-2.5 py-1 text-xs rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 transition-colors">{t.skills.bulkEnable}</button>
+              <button onClick={() => bulkToggleSkills(false)} className="px-2.5 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 transition-colors">{t.skills.bulkDisable}</button>
+              <button onClick={() => setSelectedSkills(new Set())} className="p-1 rounded-lg text-gray-400 hover:text-gray-600 transition-colors"><X size={14} /></button>
+            </div>
+          )}
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
               <Loader2 size={32} className="animate-spin text-violet-500/50" />
@@ -302,10 +588,26 @@ export default function Skills() {
             </div>
           ) : (
             <div className="grid gap-3 overflow-hidden">
+              {/* Select all / Deselect all */}
+              <div className="flex items-center gap-2 px-1">
+                <button onClick={() => {
+                  if (selectedSkills.size === filtered.length) setSelectedSkills(new Set());
+                  else setSelectedSkills(new Set(filtered.map(s => s.skillKey || s.id)));
+                }} className="text-xs text-gray-500 hover:text-violet-600 transition-colors flex items-center gap-1">
+                  {selectedSkills.size === filtered.length && filtered.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
+                  {selectedSkills.size === filtered.length && filtered.length > 0 ? t.skills.deselectAll : t.skills.selectAll}
+                </button>
+              </div>
               {filtered.map(skill => (
                 <div key={skill.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50'} hover:shadow-md transition-all group overflow-hidden`}>
                   {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
                   <div className="flex items-center gap-3 min-w-0">
+                    <button onClick={() => {
+                      const key = skill.skillKey || skill.id;
+                      setSelectedSkills(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+                    }} className="shrink-0 text-gray-400 hover:text-violet-600 transition-colors">
+                      {selectedSkills.has(skill.skillKey || skill.id) ? <CheckSquare size={18} className="text-violet-600" /> : <Square size={18} />}
+                    </button>
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border ${skill.enabled ? 'bg-[linear-gradient(135deg,rgba(37,99,235,0.18),rgba(14,165,233,0.12))] border-blue-100/80 dark:border-blue-800/40 text-blue-600' : 'bg-gray-100 dark:bg-gray-700 border-transparent'}`}>
                       <Sparkles size={18} className={skill.enabled ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'} />
                     </div>
@@ -316,11 +618,22 @@ export default function Skills() {
                         {getSourceBadge(skill.source)}
                       </div>
                       {skill.description && <p className="text-xs text-gray-500 truncate mt-0.5">{skill.description}</p>}
+                      {skill.path && <p className="text-[10px] text-gray-400 truncate mt-0.5 flex items-center gap-1"><FolderOpen size={10} />{skill.path}</p>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
                       {skill.requires && (skill.requires.env?.length || skill.requires.bins?.length || skill.requires.anyBins?.length || skill.requires.config?.length) && (
                         <button onClick={() => setConfigSkill(skill)} className="text-[10px] px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-600 border border-amber-100 dark:border-amber-800 hover:bg-amber-100 transition-colors shrink-0">
                           {t.skills.configRequired}
+                        </button>
+                      )}
+                      {(skill.source === 'workspace' || skill.source === 'installed') && (
+                        <button
+                          onClick={() => setConfirmUninstall({ id: skill.skillKey || skill.id, name: skill.name })}
+                          disabled={uninstalling === (skill.skillKey || skill.id)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors shrink-0 disabled:opacity-50"
+                          title={t.skills.uninstall}
+                        >
+                          {uninstalling === (skill.skillKey || skill.id) ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                         </button>
                       )}
                         <button onClick={() => toggleSkill(skill)} className="relative group/toggle focus:outline-none shrink-0" title={skill.enabled ? t.common.running : t.common.stopped}>
@@ -416,12 +729,27 @@ export default function Skills() {
 
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearchClawHub()} placeholder={t.skills.searchClawHub}
+            <input value={search} onChange={e => { setSearch(e.target.value); debouncedHubSearch(); }} onKeyDown={e => e.key === 'Enter' && handleSearchClawHub()} placeholder={t.skills.searchClawHub}
               className="w-full pl-9 pr-10 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
             <button onClick={handleSearchClawHub} className="absolute right-3 top-1/2 -translate-y-1/2 text-violet-600 hover:text-violet-700">
               <Search size={14} />
             </button>
           </div>
+
+          {hubCategories.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setHubCategory('all')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${hubCategory === 'all' ? 'bg-violet-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                {t.skills.allFilter}
+              </button>
+              {hubCategories.map(cat => (
+                <button key={cat} onClick={() => setHubCategory(cat)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${hubCategory === cat ? 'bg-violet-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+          )}
 
           {hubLoading ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
@@ -449,7 +777,7 @@ export default function Skills() {
                           <Globe size={18} className="text-blue-600 dark:text-blue-400" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className="text-sm font-bold text-gray-900 dark:text-white truncate" title={skill.name}>{skill.name}</h4>
+                          <h4 className="text-sm font-bold text-gray-900 dark:text-white truncate cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors" title={skill.name} onClick={() => setDetailSkill(skill)}>{skill.name}</h4>
                           <div className="flex items-center gap-2 mt-0.5">
                             {skill.version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 font-mono">v{skill.version}</span>}
                             {isInstalled && installedVersion && (
@@ -466,6 +794,12 @@ export default function Skills() {
                     <div className="flex-1 mb-4">
                       <p className="text-xs text-gray-500 line-clamp-3 mb-1" title={skill.description}>{skill.description}</p>
                       {skill.author && <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">by {skill.author}</p>}
+                      {depResults[skill.id] && !depResults[skill.id].allMet && (
+                        <div className="mt-2 px-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40">
+                          <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400">{t.skills.depsMissing.replace('{n}', String(depResults[skill.id].missing.length))}</p>
+                          <p className="text-[10px] text-amber-600/80 dark:text-amber-500/80 mt-0.5 truncate">{depResults[skill.id].missing.join(', ')}</p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 pt-3 border-t border-gray-50 dark:border-gray-800">
@@ -481,9 +815,25 @@ export default function Skills() {
                         </button>
                       )}
                       {isInstalled ? (
-                        <button disabled className={`${modern ? 'page-modern-success flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default'}`}>
-                          <Check size={14} />{t.common.installed}
-                        </button>
+                        <>
+                          {skill.version && installedVersion && skill.version !== installedVersion ? (
+                            <button
+                              onClick={() => handleUpdateSkill(skill.id)}
+                              disabled={updating === skill.id}
+                              className={`${modern ? 'page-modern-accent flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 transition-colors'}`}>
+                              {updating === skill.id ? <Loader2 size={14} className="animate-spin" /> : <ArrowUpCircle size={14} />}
+                              {updating === skill.id ? t.skills.updating : `${t.skills.update} → v${skill.version}`}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmUninstall({ id: skill.id, name: skill.name })}
+                              disabled={uninstalling === skill.id}
+                              className={`${modern ? 'page-modern-action flex-1 py-2 text-xs text-red-500 hover:text-red-600' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors disabled:opacity-50'}`}>
+                              {uninstalling === skill.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                              {uninstalling === skill.id ? t.skills.uninstalling : t.skills.uninstall}
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <button onClick={() => handleInstallSkill(skill.id)} disabled={isInstalling}
                           className={`${modern ? 'page-modern-accent flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-violet-600 dark:bg-violet-500 text-white hover:bg-violet-700 dark:hover:bg-violet-600 disabled:opacity-50 transition-colors'}`}>
@@ -497,6 +847,22 @@ export default function Skills() {
               })}
             </div>
           )}
+          {/* Pagination */}
+          {hubTotal > hubLimit && (
+            <div className="flex items-center justify-center gap-2 mt-4">
+              <button
+                onClick={() => { const p = hubPage - 1; setHubPage(p); loadClawHub(p); }}
+                disabled={hubPage <= 1 || hubLoading}
+                className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
+              >←</button>
+              <span className="text-xs text-gray-500">{hubPage} / {Math.ceil(hubTotal / hubLimit)}</span>
+              <button
+                onClick={() => { const p = hubPage + 1; setHubPage(p); loadClawHub(p); }}
+                disabled={hubPage >= Math.ceil(hubTotal / hubLimit) || hubLoading}
+                className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
+              >→</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -504,16 +870,66 @@ export default function Skills() {
       {configSkill && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setConfigSkill(null)}>
             <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
-            <div className={`${modern ? 'px-5 py-4 border-b border-blue-100/70 dark:border-blue-800/20 flex items-center justify-between bg-[linear-gradient(145deg,rgba(255,255,255,0.82),rgba(239,246,255,0.6))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.86),rgba(30,64,175,0.1))]' : 'px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900'}`}>
+            <div className={`${modern ? 'px-5 py-4 border-b border-blue-100/70 dark:border-blue-800/20 flex items-center justify-between gap-3 bg-[linear-gradient(145deg,rgba(255,255,255,0.82),rgba(239,246,255,0.6))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.86),rgba(30,64,175,0.1))]' : 'px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3 bg-gray-50/50 dark:bg-gray-900'}`}>
               <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
                 <Sparkles size={16} className="text-blue-500" />
                 {configSkill.name} {t.skills.configRequirements}
               </h3>
-              <button onClick={() => setConfigSkill(null)} className={`${modern ? 'page-modern-action p-1.5' : 'p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors'}`}>
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {configSkill.requires?.config?.length ? (
+                  <>
+                    <button
+                      onClick={() => handleExportSkillConfig(configSkill)}
+                      disabled={configLoading || !!configAction}
+                      className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors'} disabled:opacity-50`}
+                    >
+                      {configAction === 'export' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                      {t.skills.configExport}
+                    </button>
+                    <button
+                      onClick={() => configImportRef.current?.click()}
+                      disabled={!!configAction}
+                      className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors'} disabled:opacity-50`}
+                    >
+                      {configAction === 'import' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                      {t.skills.configImport}
+                    </button>
+                    <input ref={configImportRef} type="file" accept="application/json" className="hidden" onChange={handleSkillConfigImportSelected} />
+                  </>
+                ) : null}
+                <button onClick={() => setConfigSkill(null)} className={`${modern ? 'page-modern-action p-1.5' : 'p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors'}`}>
+                  <X size={18} />
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-auto p-6 space-y-6">
+              {configSkill.requires?.config && configSkill.requires.config.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                      <FolderOpen size={14} /> {t.skills.configCurrentValues}
+                    </h4>
+                    {configLoading ? <span className="text-[11px] text-gray-400">{t.common.loading}</span> : null}
+                  </div>
+                  <div className="space-y-3">
+                    {configSkill.requires.config.map(configKey => {
+                      const hasValue = Object.prototype.hasOwnProperty.call(configSnapshot?.values || {}, configKey);
+                      const value = hasValue ? configSnapshot?.values[configKey] : undefined;
+                      return (
+                        <div key={configKey} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800">
+                          <div className="flex items-center justify-between mb-2">
+                            <code className="text-sm font-bold font-mono text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded">{configKey}</code>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${hasValue ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'}`}>
+                              {hasValue ? t.skills.configValueSet : t.skills.configValueUnset}
+                            </span>
+                          </div>
+                          <pre className="bg-gray-900 dark:bg-black rounded-lg p-3 text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-all overflow-x-auto">{hasValue ? JSON.stringify(value, null, 2) : t.skills.configValueUnset}</pre>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {configSkill.requires?.env && configSkill.requires.env.length > 0 && (
                 <div className="space-y-3">
                   <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
@@ -614,6 +1030,33 @@ export default function Skills() {
                   ))}
                 </div>
               )}
+              {pendingConfigImport && (
+                <div className="space-y-3 rounded-2xl border border-blue-100 dark:border-blue-800/30 bg-blue-50/60 dark:bg-blue-900/10 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-blue-700 dark:text-blue-300">{t.skills.configImportPreview}</h4>
+                      <p className="text-xs text-blue-600/80 dark:text-blue-300/80 mt-1">{t.skills.configImportSource.replace('{file}', pendingConfigImport.fileName)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setPendingConfigImport(null)}
+                        className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs' : 'px-3 py-1.5 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors'}`}
+                      >
+                        {t.common.cancel}
+                      </button>
+                      <button
+                        onClick={handleApplySkillConfigImport}
+                        disabled={configAction === 'import'}
+                        className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors'} disabled:opacity-50`}
+                      >
+                        {configAction === 'import' ? <Loader2 size={14} className="animate-spin inline mr-1" /> : null}
+                        {t.skills.configImportConfirm}
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="bg-gray-900 dark:bg-black rounded-lg p-3 text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-all overflow-x-auto">{JSON.stringify(pendingConfigImport.values, null, 2)}</pre>
+                </div>
+              )}
               {configSkill.path && (
                 <div className="text-xs text-gray-400 pt-4 border-t border-gray-100 dark:border-gray-800 flex items-center gap-2">
                   <FolderOpen size={14} />
@@ -621,6 +1064,100 @@ export default function Skills() {
                   <code className="text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded font-mono text-[11px]">{configSkill.path}</code>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Uninstall Confirmation Dialog */}
+      {confirmUninstall && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setConfirmUninstall(null)}>
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
+            <div className={`${modern ? 'px-5 py-4 border-b border-red-100/70 dark:border-red-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.82),rgba(254,226,226,0.6))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.86),rgba(153,27,27,0.1))]' : 'px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-red-50/50 dark:bg-gray-900'}`}>
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <Trash2 size={16} className="text-red-500" />
+                {t.skills.uninstallConfirm}
+              </h3>
+            </div>
+            <div className="p-5">
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+                {t.skills.uninstallConfirmMsg.replace('{id}', confirmUninstall.name)}
+              </p>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setConfirmUninstall(null)}
+                  className={`${modern ? 'page-modern-action px-4 py-2 text-xs' : 'px-4 py-2 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'}`}>
+                  {t.common.cancel}
+                </button>
+                <button onClick={() => handleUninstallSkill(confirmUninstall.id)}
+                  className={`${modern ? 'page-modern-accent px-4 py-2 text-xs bg-red-600 hover:bg-red-700' : 'px-4 py-2 text-xs font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors'}`}>
+                  {t.skills.uninstall}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Skill Detail Modal */}
+      {detailSkill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={() => setDetailSkill(null)}>
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
+            <div className={`${modern ? 'px-5 py-4 border-b border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.82),rgba(219,234,254,0.6))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.86),rgba(37,99,235,0.1))]' : 'px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-blue-50/50 dark:bg-gray-900'}`}>
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <Sparkles size={16} className="text-blue-600" />
+                {t.skills.detailTitle}
+              </h3>
+            </div>
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+              <div>
+                <h4 className="text-base font-bold text-gray-900 dark:text-white">{detailSkill.name}</h4>
+                <p className="text-sm text-gray-500 mt-1">{detailSkill.description || t.skills.detailNoDescription}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {detailSkill.version && (
+                  <div className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800">
+                    <span className="text-gray-400">{t.skills.detailVersion}</span>
+                    <span className="ml-2 font-mono text-gray-700 dark:text-gray-300">v{detailSkill.version}</span>
+                  </div>
+                )}
+                {detailSkill.author && (
+                  <div className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800">
+                    <span className="text-gray-400">{t.skills.detailAuthor}</span>
+                    <span className="ml-2 text-gray-700 dark:text-gray-300">{detailSkill.author}</span>
+                  </div>
+                )}
+                {detailSkill.category && (
+                  <div className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800">
+                    <span className="text-gray-400">{t.skills.detailCategory}</span>
+                    <span className="ml-2 text-gray-700 dark:text-gray-300">{detailSkill.category}</span>
+                  </div>
+                )}
+              </div>
+              {detailSkill.requires && (detailSkill.requires.env?.length || detailSkill.requires.bins?.length || detailSkill.requires.anyBins?.length) && (
+                <div className="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/40">
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">{t.skills.detailRequirements}</p>
+                  {detailSkill.requires.env?.map((e: string) => <span key={e} className="inline-block text-[10px] mr-1 mb-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 font-mono">{e}</span>)}
+                  {detailSkill.requires.bins?.map((b: string) => <span key={b} className="inline-block text-[10px] mr-1 mb-1 px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 font-mono">{b}</span>)}
+                  {detailSkill.requires.anyBins?.map((b: string) => <span key={b} className="inline-block text-[10px] mr-1 mb-1 px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 font-mono">{b}</span>)}
+                </div>
+              )}
+              {depResults[detailSkill.id] && (
+                <div className={`px-3 py-2 rounded-lg border text-xs ${depResults[detailSkill.id].allMet ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-100 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-400' : 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/40 text-red-700 dark:text-red-400'}`}>
+                  {depResults[detailSkill.id].allMet ? t.skills.depsMet : `${t.skills.depsMissing.replace('{n}', String(depResults[detailSkill.id].missing.length))}: ${depResults[detailSkill.id].missing.join(', ')}`}
+                </div>
+              )}
+              {detailSkill.path && (
+                <div className="px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs">
+                  <span className="text-gray-400">{t.skills.installPath}</span>
+                  <span className="ml-2 font-mono text-gray-600 dark:text-gray-400 break-all">{detailSkill.path}</span>
+                </div>
+              )}
+            </div>
+            <div className="px-5 pb-4 flex justify-end">
+              <button onClick={() => setDetailSkill(null)}
+                className={`${modern ? 'page-modern-action px-4 py-2 text-xs' : 'px-4 py-2 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'}`}>
+                {t.common.close}
+              </button>
             </div>
           </div>
         </div>

@@ -14,9 +14,9 @@ const FAKE_LOGS = [
 ];
 
 const FAKE_SKILLS = [
-  { id: 'web-search', skillKey: 'web-search', name: 'Web Search', description: '联网搜索能力，支持Google/Bing/DuckDuckGo', enabled: true, source: 'app-skill', version: '1.2.0', requires: { env: ['SEARCH_API_KEY'], bins: [] } },
+  { id: 'web-search', skillKey: 'web-search', name: 'Web Search', description: '联网搜索能力，支持Google/Bing/DuckDuckGo', enabled: true, source: 'app-skill', version: '1.2.0', requires: { env: ['SEARCH_API_KEY'], bins: [], config: ['tools.web.search.provider', 'tools.web.search.maxResults'] } },
   { id: 'image-gen', skillKey: 'image-gen', name: 'Image Generation', description: 'AI图像生成，支持DALL-E/Stable Diffusion', enabled: true, source: 'app-skill', version: '1.0.3', requires: { env: ['OPENAI_API_KEY'], bins: [] } },
-  { id: 'code-runner', skillKey: 'code-runner', name: 'Code Runner', description: '安全沙箱代码执行，支持Python/JS/Shell', enabled: true, source: 'managed', version: '0.9.1', requires: { env: [], bins: ['python3', 'node'] } },
+  { id: 'code-runner', skillKey: 'code-runner', name: 'Code Runner', description: '安全沙箱代码执行，支持Python/JS/Shell', enabled: true, source: 'managed', version: '0.9.1', requires: { env: [], bins: ['python3', 'node'], config: ['tools.exec.timeoutSec', 'tools.exec.ask'] } },
   { id: 'weather', skillKey: 'weather', name: 'Weather', description: '天气查询插件，支持全球城市', enabled: true, source: 'managed', version: '1.1.0' },
   { id: 'translator', skillKey: 'translator', name: 'Translator', description: '多语言翻译，支持100+语言', enabled: false, source: 'managed', version: '0.8.0' },
   { id: 'reminder', skillKey: 'reminder', name: 'Reminder', description: '定时提醒功能', enabled: true, source: 'workspace', version: '0.5.0' },
@@ -154,6 +154,45 @@ const FAKE_CONFIG: any = {
     exec: { timeoutSec: 30, security: 'allowlist', ask: 'on-miss', safeBins: ['ls', 'cat', 'echo', 'grep', 'git'] },
   },
 };
+
+function configPathSegments(path: string): string[] {
+  return path.split('.').map(part => part.trim()).filter(Boolean);
+}
+
+function getNestedConfigValue(root: any, path: string): { ok: boolean; value?: any } {
+  let current = root;
+  for (const segment of configPathSegments(path)) {
+    if (!current || typeof current !== 'object' || !(segment in current)) {
+      return { ok: false };
+    }
+    current = current[segment];
+  }
+  return { ok: true, value: current };
+}
+
+function setNestedConfigValue(root: any, path: string, value: any) {
+  const segments = configPathSegments(path);
+  let current = root;
+  for (const segment of segments.slice(0, -1)) {
+    if (!current[segment] || typeof current[segment] !== 'object') {
+      current[segment] = {};
+    }
+    current = current[segment];
+  }
+  current[segments[segments.length - 1]] = value;
+}
+
+function deleteNestedConfigValue(root: any, path: string) {
+  const segments = configPathSegments(path);
+  let current = root;
+  for (const segment of segments.slice(0, -1)) {
+    if (!current || typeof current !== 'object' || !current[segment] || typeof current[segment] !== 'object') {
+      return;
+    }
+    current = current[segment];
+  }
+  delete current[segments[segments.length - 1]];
+}
 
 const FAKE_FILES: any[] = [
   { name: 'openclaw.json', path: 'openclaw.json', size: 2048, sizeHuman: '2.0 KB', isDirectory: false, modifiedAt: new Date(Date.now() - 3600000).toISOString(), extension: '.json', ageDays: 0 },
@@ -521,22 +560,66 @@ export const mockApi = {
       ],
     };
   },
+  getSkillConfig: async (skillId: string) => {
+    await delay(160);
+    const skill = FAKE_SKILLS.find(item => (item.skillKey || item.id) === skillId || item.id === skillId);
+    const configKeys = Array.isArray(skill?.requires?.config) ? skill!.requires!.config : [];
+    const values: Record<string, any> = {};
+    configKeys.forEach((key: string) => {
+      const result = getNestedConfigValue(FAKE_CONFIG, key);
+      if (result.ok) values[key] = result.value;
+    });
+    return { ok: true, skillId: skill?.id || skillId, skillKey: skill?.skillKey || skillId, configKeys, values };
+  },
+  updateSkillConfig: async (skillId: string, values: Record<string, any>) => {
+    await delay(220);
+    const skill = FAKE_SKILLS.find(item => (item.skillKey || item.id) === skillId || item.id === skillId);
+    const configKeys = Array.isArray(skill?.requires?.config) ? skill!.requires!.config : [];
+    const allowed = new Set(configKeys);
+    Object.entries(values || {}).forEach(([key, value]) => {
+      if (!allowed.has(key)) return;
+      if (value == null) deleteNestedConfigValue(FAKE_CONFIG, key);
+      else setNestedConfigValue(FAKE_CONFIG, key, value);
+    });
+    const snapshot: Record<string, any> = {};
+    configKeys.forEach((key: string) => {
+      const result = getNestedConfigValue(FAKE_CONFIG, key);
+      if (result.ok) snapshot[key] = result.value;
+    });
+    return { ok: true, skillId: skill?.id || skillId, skillKey: skill?.skillKey || skillId, configKeys, values: snapshot };
+  },
   syncClawHub: async () => { await delay(800); return { ok: true, skills: [] }; },
-  searchClawHub: async (query?: string, _agentId?: string) => {
+  searchClawHub: async (query?: string, _agentId?: string, page?: number, limit?: number) => {
     await delay(500);
     const q = (query || '').toLowerCase();
-    const skills = q
+    const all = q
       ? FAKE_CLAWHUB_SKILLS.filter(skill =>
           skill.id.toLowerCase().includes(q) ||
           skill.name.toLowerCase().includes(q) ||
           skill.description.toLowerCase().includes(q),
         )
       : FAKE_CLAWHUB_SKILLS;
-    return { ok: true, registryBase: 'https://clawhub.ai', skills: JSON.parse(JSON.stringify(skills)) };
+    const p = page || 1;
+    const l = limit || 30;
+    const start = (p - 1) * l;
+    const skills = all.slice(start, start + l);
+    return { ok: true, registryBase: 'https://clawhub.ai', skills: JSON.parse(JSON.stringify(skills)), page: p, limit: l, total: all.length };
   },
   installClawHubSkill: async (skillId: string, _agentId?: string) => {
     await delay(800);
     return { ok: true, skillId, agentId: _agentId || FAKE_AGENTS.default, version: '1.0.0' };
+  },
+  uninstallSkill: async (skillId: string, _agentId?: string) => {
+    await delay(600);
+    return { ok: true, skillId, agentId: _agentId || FAKE_AGENTS.default };
+  },
+  checkSkillDeps: async (env?: string[], bins?: string[], anyBins?: string[]) => {
+    await delay(300);
+    const envR = (env || []).map(e => ({ name: e, found: Math.random() > 0.3 }));
+    const binR = (bins || []).map(b => ({ name: b, found: Math.random() > 0.3 }));
+    const anyR = (anyBins || []).map(b => ({ name: b, found: Math.random() > 0.5 }));
+    const allMet = envR.every(r => r.found) && binR.every(r => r.found) && (anyR.length === 0 || anyR.some(r => r.found));
+    return { ok: true, allMet, env: envR, bins: binR, anyBins: anyR };
   },
   getCronJobs: async () => { await delay(200); return { ok: true, jobs: FAKE_CRON_JOBS }; },
   updateCronJobs: async () => { await delay(300); return { ok: true }; },
