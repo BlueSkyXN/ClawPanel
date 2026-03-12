@@ -406,7 +406,7 @@ jobs:
 
   publish-gitee-release:
     name: Publish Gitee Release
-    if: (startsWith(github.ref, 'refs/tags/pro-v') || startsWith(github.ref, 'refs/tags/lite-v')) && secrets.GITEE_TOKEN != ''
+    if: startsWith(github.ref, 'refs/tags/pro-v') || startsWith(github.ref, 'refs/tags/lite-v')
     needs: [prepare, bundle, publish-release]
     runs-on: ubuntu-24.04
 
@@ -426,6 +426,10 @@ jobs:
           RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
         run: |
           set -euo pipefail
+          if [[ -z "${GITEE_TOKEN:-}" ]]; then
+            echo "GITEE_TOKEN 未配置，跳过 Gitee Release 同步。"
+            exit 0
+          fi
           python3 - <<'PY'
           import json
           import mimetypes
