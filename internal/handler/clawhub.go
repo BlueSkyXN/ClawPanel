@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -63,6 +64,7 @@ type clawHubOriginFile struct {
 }
 
 type clawHubSearchResponse struct {
+	Total   int `json:"total"`
 	Results []struct {
 		Slug        string `json:"slug"`
 		DisplayName string `json:"displayName"`
@@ -73,6 +75,7 @@ type clawHubSearchResponse struct {
 }
 
 type clawHubExploreResponse struct {
+	Total int `json:"total"`
 	Items []struct {
 		Slug          string `json:"slug"`
 		DisplayName   string `json:"displayName"`
@@ -116,6 +119,12 @@ func SearchClawHub(cfg *config.Config) gin.HandlerFunc {
 				limit = parsed
 			}
 		}
+		page := 1
+		if raw := strings.TrimSpace(c.Query("page")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				page = parsed
+			}
+		}
 
 		workdir := resolveSkillsWorkspace(cfg, agentID)
 		if err := ensureClawHubStatePath(workdir); err != nil {
@@ -129,7 +138,7 @@ func SearchClawHub(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		items, err := fetchClawHubItems(registry.RequestBase, query, limit)
+		items, total, err := fetchClawHubItems(registry.RequestBase, query, limit, page)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 			return
@@ -145,6 +154,139 @@ func SearchClawHub(cfg *config.Config) gin.HandlerFunc {
 			"agentId":      agentID,
 			"registryBase": registry.PublicBase,
 			"skills":       items,
+			"page":         page,
+			"limit":        limit,
+			"total":        total,
+		})
+	}
+}
+
+// UninstallSkill removes a skill from the workspace skills directory and cleans up lock file entries.
+func UninstallSkill(cfg *config.Config) gin.HandlerFunc {
+	type reqBody struct {
+		SkillID string `json:"skillId"`
+		AgentID string `json:"agentId"`
+	}
+	return func(c *gin.Context) {
+		var req reqBody
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		slug := sanitizeClawHubSlug(req.SkillID)
+		if slug == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid skillId"})
+			return
+		}
+		agentID, err := resolveRequestedAgentID(cfg, req.AgentID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		workdir := resolveSkillsWorkspace(cfg, agentID)
+		if workdir == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "workspace not configured"})
+			return
+		}
+		skillDir := filepath.Join(workdir, "skills", slug)
+
+		// Validate paths are safe before removal
+		if err := ensureClawHubStatePath(workdir); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		realWorkdir, err := resolveExistingRealPath(workdir)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": fmt.Sprintf("resolve workspace path: %s", err)})
+			return
+		}
+
+		info, statErr := os.Lstat(skillDir)
+		if statErr != nil || !info.IsDir() {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": fmt.Sprintf("skill %s is not installed in workspace", slug)})
+			return
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "refusing to remove symlinked skill directory"})
+			return
+		}
+		realSkillDir, err := resolveExistingRealPath(skillDir)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": fmt.Sprintf("resolve skill path: %s", err)})
+			return
+		}
+		if !pathWithinBase(realWorkdir, realSkillDir) {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "skill path escapes workspace"})
+			return
+		}
+
+		// Remove skill directory
+		if err := os.RemoveAll(skillDir); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": fmt.Sprintf("failed to remove skill: %s", err)})
+			return
+		}
+
+		// Clean up lock file entry
+		removeClawHubLockEntry(workdir, slug)
+
+		c.JSON(http.StatusOK, gin.H{
+			"ok":      true,
+			"agentId": agentID,
+			"skillId": slug,
+		})
+	}
+}
+
+// CheckSkillDeps checks whether a skill's declared requirements (env vars, binaries) are satisfied.
+func CheckSkillDeps(_ *config.Config) gin.HandlerFunc {
+	type reqBody struct {
+		Env     []string `json:"env"`
+		Bins    []string `json:"bins"`
+		AnyBins []string `json:"anyBins"`
+	}
+	type depResult struct {
+		Name    string `json:"name"`
+		Found   bool   `json:"found"`
+	}
+	return func(c *gin.Context) {
+		var req reqBody
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		envResults := make([]depResult, 0, len(req.Env))
+		for _, e := range req.Env {
+			_, found := os.LookupEnv(e)
+			envResults = append(envResults, depResult{Name: e, Found: found})
+		}
+		binResults := make([]depResult, 0, len(req.Bins))
+		for _, b := range req.Bins {
+			_, err := exec.LookPath(b)
+			binResults = append(binResults, depResult{Name: b, Found: err == nil})
+		}
+		anyBinOK := len(req.AnyBins) == 0
+		anyBinResults := make([]depResult, 0, len(req.AnyBins))
+		for _, b := range req.AnyBins {
+			_, err := exec.LookPath(b)
+			found := err == nil
+			if found { anyBinOK = true }
+			anyBinResults = append(anyBinResults, depResult{Name: b, Found: found})
+		}
+		allOK := anyBinOK
+		for _, r := range envResults {
+			if !r.Found { allOK = false; break }
+		}
+		if allOK {
+			for _, r := range binResults {
+				if !r.Found { allOK = false; break }
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"ok":      true,
+			"allMet":  allOK,
+			"env":     envResults,
+			"bins":    binResults,
+			"anyBins": anyBinResults,
 		})
 	}
 }
@@ -243,20 +385,21 @@ func InstallClawHubSkill(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-func fetchClawHubItems(registryBase, query string, limit int) ([]clawHubSkillItem, error) {
+func fetchClawHubItems(registryBase, query string, limit, page int) ([]clawHubSkillItem, int, error) {
+	offset := (page - 1) * limit
 	if strings.TrimSpace(query) == "" {
-		resp, err := clawHubHTTPClient.Get(registryBase + "/api/v1/skills?limit=" + strconv.Itoa(limit) + "&sort=downloads")
+		resp, err := clawHubHTTPClient.Get(registryBase + "/api/v1/skills?limit=" + strconv.Itoa(limit) + "&offset=" + strconv.Itoa(offset) + "&sort=downloads")
 		if err != nil {
-			return nil, fmt.Errorf("search clawhub: request failed")
+			return nil, 0, fmt.Errorf("search clawhub: request failed")
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			return nil, fmt.Errorf("search clawhub: %s", strings.TrimSpace(string(body)))
+			return nil, 0, fmt.Errorf("search clawhub: %s", strings.TrimSpace(string(body)))
 		}
 		var payload clawHubExploreResponse
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return nil, fmt.Errorf("decode clawhub explore response: %w", err)
+			return nil, 0, fmt.Errorf("decode clawhub explore response: %w", err)
 		}
 		items := make([]clawHubSkillItem, 0, len(payload.Items))
 		for _, item := range payload.Items {
@@ -272,24 +415,25 @@ func fetchClawHubItems(registryBase, query string, limit int) ([]clawHubSkillIte
 				UpdatedAt:   item.UpdatedAt,
 			})
 		}
-		return items, nil
+		return items, payload.Total, nil
 	}
 
 	values := url.Values{}
 	values.Set("q", query)
 	values.Set("limit", strconv.Itoa(limit))
+	values.Set("offset", strconv.Itoa(offset))
 	resp, err := clawHubHTTPClient.Get(registryBase + "/api/v1/search?" + values.Encode())
 	if err != nil {
-		return nil, fmt.Errorf("search clawhub: request failed")
+		return nil, 0, fmt.Errorf("search clawhub: request failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("search clawhub: %s", strings.TrimSpace(string(body)))
+		return nil, 0, fmt.Errorf("search clawhub: %s", strings.TrimSpace(string(body)))
 	}
 	var payload clawHubSearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode clawhub search response: %w", err)
+		return nil, 0, fmt.Errorf("decode clawhub search response: %w", err)
 	}
 	items := make([]clawHubSkillItem, 0, len(payload.Results))
 	for _, item := range payload.Results {
@@ -301,7 +445,7 @@ func fetchClawHubItems(registryBase, query string, limit int) ([]clawHubSkillIte
 			UpdatedAt:   item.UpdatedAt,
 		})
 	}
-	return items, nil
+	return items, payload.Total, nil
 }
 
 func fetchClawHubSkill(registryBase, slug string) (*clawHubSkillResponse, error) {
@@ -543,6 +687,22 @@ func updateClawHubLock(workdir, slug, version string, installedAt int64) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(workdir, ".clawhub", "lock.json"), raw, 0644)
+}
+
+func removeClawHubLockEntry(workdir, slug string) {
+	lock, err := readClawHubLock(workdir)
+	if err != nil || lock == nil || lock.Skills == nil {
+		return
+	}
+	if _, ok := lock.Skills[slug]; !ok {
+		return
+	}
+	delete(lock.Skills, slug)
+	raw, err := json.MarshalIndent(lock, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(workdir, ".clawhub", "lock.json"), raw, 0644)
 }
 
 func writeClawHubOrigin(skillDir, registryBase, slug, version string, installedAt int64) error {
