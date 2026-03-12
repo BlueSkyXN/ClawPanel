@@ -7,7 +7,7 @@ $AccelBase = "http://39.102.53.188:16198/clawpanel"
 $AccelMeta = "$AccelBase/update-lite.json"
 $InstallDir = "C:\ClawPanelLite"
 $ServiceName = "clawpanel-lite"
-$DefaultVersion = "0.1.8"
+$DefaultVersion = "0.1.9"
 
 function Get-LatestVersionFromGitHub {
   $items = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=20" -UseBasicParsing

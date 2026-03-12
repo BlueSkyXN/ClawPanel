@@ -18,7 +18,7 @@ TAG_PREFIX="pro-v"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
 PORT="19527"
 ACCEL_BASE="http://39.102.53.188:16198/clawpanel"
-DEFAULT_VERSION="5.2.8"
+DEFAULT_VERSION="5.2.10"
 UPDATE_META="${UPDATE_META:-update-pro.json}"
 
 # ==================== 自动获取最新版本 ====================

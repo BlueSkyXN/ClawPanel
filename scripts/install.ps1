@@ -38,7 +38,7 @@ try {
         $tag = [string](($releaseInfo | Where-Object { $_.tag_name -like "$TAG_PREFIX*" } | Select-Object -First 1).tag_name)
         $VERSION = $tag -replace "^$TAG_PREFIX", ''
     } catch {
-        $VERSION = "5.2.8"
+        $VERSION = "5.2.10"
     }
 }
 
