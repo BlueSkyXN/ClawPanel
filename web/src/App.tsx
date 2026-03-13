@@ -18,6 +18,7 @@ const Agents = lazy(() => import('./pages/Agents'));
 const Workflows = lazy(() => import('./pages/Workflows'));
 const Sessions = lazy(() => import('./pages/Sessions'));
 const Workspace = lazy(() => import('./pages/Workspace'));
+const Monitor = lazy(() => import('./pages/Monitor'));
 
 function RouteLoadingFallback() {
   return (
@@ -60,6 +61,9 @@ export default function App() {
         <Route path="/plugins" element={<OpenClawRequired openclawStatus={ws.openclawStatus} processStatus={ws.processStatus}><Suspense fallback={<RouteLoadingFallback />}><Plugins /></Suspense></OpenClawRequired>} />
         {enableAgents && (
           <Route path="/agents" element={<OpenClawRequired openclawStatus={ws.openclawStatus} processStatus={ws.processStatus}><Suspense fallback={<RouteLoadingFallback />}><Agents /></Suspense></OpenClawRequired>} />
+        )}
+        {enableAgents && (
+          <Route path="/monitor" element={<OpenClawRequired openclawStatus={ws.openclawStatus} processStatus={ws.processStatus}><Suspense fallback={<RouteLoadingFallback />}><Monitor /></Suspense></OpenClawRequired>} />
         )}
         <Route path="/workflows" element={<OpenClawRequired openclawStatus={ws.openclawStatus} processStatus={ws.processStatus}><Suspense fallback={<RouteLoadingFallback />}><Workflows /></Suspense></OpenClawRequired>} />
         <Route path="/cron" element={<OpenClawRequired openclawStatus={ws.openclawStatus} processStatus={ws.processStatus}><Suspense fallback={<RouteLoadingFallback />}><CronJobs /></Suspense></OpenClawRequired>} />

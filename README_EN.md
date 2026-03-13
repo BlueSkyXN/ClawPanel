@@ -62,6 +62,15 @@ Unified configuration for **20+ channels** with one-click enable/disable:
 - Preview semantics aligned with OpenClaw: bindings without `accountId` only match the channel default account
 - Sessions page supports `agent=all`, and cron jobs support selectable `sessionTarget`
 
+### Orchestration Monitor
+- **Global topology graph**: React Flow-based DAG visualization of all channels, agents, and routing relationships at a glance
+- Three edge types: Channel → Agent bindings, Agent → Agent sub-agent calls, unbound Channel → default Agent fallback
+- Click nodes/edges for detail panel: Agent identity/model/tools/sandbox, Channel status/linked agents, Binding match conditions/priority
+- Metrics bar: agent count, channel count, binding count, total sessions
+- Status cards: per-agent session count, last active time, online status
+- dagre auto-layout + manual drag, zoom/pan/minimap support
+- Manual refresh rendering, dark mode and i18n (zh-CN / en) support
+
 ### Skill Center + Plugin Management
 - Skills/plugins separated view with search and filter
 - One-click enable/disable, real-time scanning of installed skills

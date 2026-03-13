@@ -496,4 +496,48 @@ export interface Translations {
     fileNotePlaceholder: string;
     saveNote: string;
   };
+
+  // Monitor (Agent Orchestration Dashboard)
+  monitor: {
+    title: string;
+    subtitle: string;
+    refresh: string;
+    refreshing: string;
+    agents: string;
+    channels: string;
+    bindings: string;
+    sessions: string;
+    defaultAgent: string;
+    noData: string;
+    noDataHint: string;
+    selectNode: string;
+    selectNodeHint: string;
+    agentDetail: string;
+    channelDetail: string;
+    bindingDetail: string;
+    toolsProfile: string;
+    sandboxMode: string;
+    subagents: string;
+    groupChat: string;
+    lastActive: string;
+    sessionCount: string;
+    enabled: string;
+    disabled: string;
+    matchCondition: string;
+    bindingType: string;
+    targetAgent: string;
+    statusCards: string;
+    topology: string;
+    details: string;
+    connected: string;
+    fallbackRoute: string;
+    agentRoute: string;
+    subagentCall: string;
+    secondsAgo: string;
+    minutesAgo: string;
+    hoursAgo: string;
+    daysAgo: string;
+    justNow: string;
+    never: string;
+  };
 }

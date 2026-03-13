@@ -3,7 +3,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ScrollText, Radio, Sparkles, Clock, Settings,
   Moon, Sun, LogOut, Menu, FolderOpen, Languages, MessageSquare,
-  RotateCw, RefreshCw, Power, Puzzle, Bot, Search, Bell, ChevronDown, GitBranch,
+  RotateCw, RefreshCw, Power, Puzzle, Bot, Search, Bell, ChevronDown, GitBranch, Network,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import AIAssistant from './AIAssistant';
@@ -59,6 +59,7 @@ function LayoutShell({ onLogout, napcatStatus, wechatStatus, openclawStatus, pro
     const path = location.pathname;
     return [
       '/agents',
+      '/monitor',
       '/channels',
       '/skills',
       '/plugins',
@@ -128,6 +129,7 @@ function LayoutShell({ onLogout, napcatStatus, wechatStatus, openclawStatus, pro
     { to: '/skills', icon: Sparkles, label: t.nav.skills },
     { to: '/plugins', icon: Puzzle, label: locale === 'zh-CN' ? '插件中心' : 'Plugins' },
     ...(enableAgents ? [{ to: '/agents', icon: Bot, label: locale === 'zh-CN' ? '智能体' : 'Agents' }] : []),
+    ...(enableAgents ? [{ to: '/monitor', icon: Network, label: locale === 'zh-CN' ? '编排监控' : 'Monitor' }] : []),
     { to: '/workflows', icon: GitBranch, label: locale === 'zh-CN' ? '工作流' : 'Workflows' },
     { to: '/cron', icon: Clock, label: t.nav.cronJobs },
     { to: '/sessions', icon: MessageSquare, label: '会话管理' },
@@ -198,6 +200,7 @@ function LayoutShell({ onLogout, napcatStatus, wechatStatus, openclawStatus, pro
     { label: '技能中心', keywords: ['skills', 'skill', '技能'], path: '/skills' },
     { label: '插件中心', keywords: ['plugins', 'plugin', '插件'], path: '/plugins' },
     ...(enableAgents ? [{ label: locale === 'zh-CN' ? '智能体' : 'Agents', keywords: ['agent', 'agents', '智能体'], path: '/agents' }] : []),
+    ...(enableAgents ? [{ label: locale === 'zh-CN' ? '编排监控' : 'Monitor', keywords: ['monitor', 'topology', '监控', '编排', '拓扑'], path: '/monitor' }] : []),
     { label: locale === 'zh-CN' ? '工作流中心' : 'Workflow Center', keywords: ['workflow', 'workflows', '流程', '工作流'], path: '/workflows' },
     { label: '定时任务', keywords: ['cron', 'jobs', '定时任务'], path: '/cron' },
     { label: '会话管理', keywords: ['session', 'sessions', '会话'], path: '/sessions' },
