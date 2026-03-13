@@ -15,7 +15,13 @@
 - macOS 安装脚本增加 19527 端口占用检测，避免与已有实例冲突
 - Gitee Release 资产上传增加重试逻辑与断点续传
 
+## 打包与发布
+
+- 修复 Lite 打包时 npm hoisted 依赖目录冲突导致构建失败的问题
+- **停止提供 Windows Lite 版**：Windows 整包超过 GitHub Release 2GB 上传限制，Windows 用户请使用 ClawPanel Pro
+
 ## 当前说明
 
 - Linux Lite 为当前正式推荐版本
-- Windows / macOS Lite 继续保持预览验证阶段
+- macOS Lite 继续保持预览验证阶段
+- Windows Lite 不再提供，请使用 Pro 版

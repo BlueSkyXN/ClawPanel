@@ -232,11 +232,6 @@ jobs:
             runner: macos-15
             artifact: binary-darwin-arm64
             binary_name: clawpanel-lite-v${{ needs.prepare.outputs.version }}-darwin-arm64
-          - os: windows
-            arch: amd64
-            runner: windows-2025
-            artifact: binary-windows-amd64
-            binary_name: clawpanel-lite-v${{ needs.prepare.outputs.version }}-windows-amd64.exe
 
     runs-on: ${{ matrix.runner }}
 

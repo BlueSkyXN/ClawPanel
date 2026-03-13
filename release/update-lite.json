@@ -5,8 +5,7 @@
   "download_urls": {
     "linux_amd64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-lite-core-v0.1.10-linux-amd64.tar.gz",
     "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.10/clawpanel-lite-core-v0.1.10-darwin-amd64.tar.gz",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.10/clawpanel-lite-core-v0.1.10-darwin-arm64.tar.gz",
-    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.10/clawpanel-lite-core-v0.1.10-windows-amd64.tar.gz"
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.10/clawpanel-lite-core-v0.1.10-darwin-arm64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""
