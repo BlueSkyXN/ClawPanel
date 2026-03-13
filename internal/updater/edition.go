@@ -11,9 +11,8 @@ type editionConfig struct {
 	ServiceName       string
 	ServiceLabel      string
 	BinaryName        string
-	GiteeUpdateJSON   string
+	AccelUpdateJSON   string
 	GitHubReleasesAPI string
-	GiteeReleasesAPI  string
 	GitHubTagPrefix   string
 }
 
@@ -24,9 +23,8 @@ func newEditionConfig(edition string) editionConfig {
 			ServiceName:       "clawpanel-lite",
 			ServiceLabel:      "com.clawpanel.lite.service",
 			BinaryName:        "clawpanel-lite",
-			GiteeUpdateJSON:   "https://gitee.com/zxy000006/ClawPanel/raw/main/release/update-lite.json",
+			AccelUpdateJSON:   "http://47.76.58.84:16198/clawpanel/update-lite.json",
 			GitHubReleasesAPI: "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases?per_page=20",
-			GiteeReleasesAPI:  "https://gitee.com/api/v5/repos/zxy000006/ClawPanel/releases?per_page=20",
 			GitHubTagPrefix:   "lite-v",
 		}
 	}
@@ -35,9 +33,8 @@ func newEditionConfig(edition string) editionConfig {
 		ServiceName:       "clawpanel",
 		ServiceLabel:      "com.clawpanel.service",
 		BinaryName:        "clawpanel",
-		GiteeUpdateJSON:   "https://gitee.com/zxy000006/ClawPanel/raw/main/release/update-pro.json",
+		AccelUpdateJSON:   "http://47.76.58.84:16198/clawpanel/update-pro.json",
 		GitHubReleasesAPI: "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases?per_page=20",
-		GiteeReleasesAPI:  "https://gitee.com/api/v5/repos/zxy000006/ClawPanel/releases?per_page=20",
 		GitHubTagPrefix:   "pro-v",
 	}
 }

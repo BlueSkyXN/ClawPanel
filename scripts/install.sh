@@ -17,10 +17,9 @@ REPO="zhaoxinyi02/ClawPanel"
 GITEE_REPO="zxy000006/ClawPanel"
 TAG_PREFIX="pro-v"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
-GITEE_RELEASES_API="https://gitee.com/api/v5/repos/${GITEE_REPO}/releases?per_page=20"
 PORT="19527"
 GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw/main"
-GITEE_RELEASE_BASE="https://gitee.com/${GITEE_REPO}/releases/download"
+ACCEL_BASE="http://47.76.58.84:16198/clawpanel"
 DEFAULT_VERSION="5.2.10"
 UPDATE_META="${UPDATE_META:-update-pro.json}"
 
@@ -29,11 +28,11 @@ get_latest_version() {
     local ver=""
     local tag=""
     if command -v curl &>/dev/null; then
-        tag=$(curl -fsSL "${GITEE_RAW_BASE}/release/${UPDATE_META}" 2>/dev/null | awk -F'"' '/"latest_version"/ {print $4; exit}')
+        tag=$(curl -fsSL "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | awk -F'"' '/"latest_version"/ {print $4; exit}')
         if [ -n "$tag" ]; then echo "${tag:-$DEFAULT_VERSION}"; return; fi
         tag=$(curl -fsSL "${GITHUB_RELEASES_API}" 2>/dev/null | awk -v prefix="$TAG_PREFIX" -F'"' '$2=="tag_name" && index($4,prefix)==1 {print $4; exit}')
     elif command -v wget &>/dev/null; then
-        tag=$(wget -qO- "${GITEE_RAW_BASE}/release/${UPDATE_META}" 2>/dev/null | awk -F'"' '/"latest_version"/ {print $4; exit}')
+        tag=$(wget -qO- "${ACCEL_BASE}/${UPDATE_META}" 2>/dev/null | awk -F'"' '/"latest_version"/ {print $4; exit}')
         if [ -n "$tag" ]; then echo "${tag:-$DEFAULT_VERSION}"; return; fi
         tag=$(wget -qO- "${GITHUB_RELEASES_API}" 2>/dev/null | awk -v prefix="$TAG_PREFIX" -F'"' '$2=="tag_name" && index($4,prefix)==1 {print $4; exit}')
     fi
@@ -53,14 +52,14 @@ VERSION=$(get_latest_version)
 normalize_source() {
   case "${1:-}" in
     github) echo "github" ;;
-    gitee) echo "gitee" ;;
+    accel) echo "accel" ;;
     *) echo "" ;;
   esac
 }
 
 other_source() {
   case "$1" in
-    github) echo "gitee" ;;
+    github) echo "accel" ;;
     *) echo "github" ;;
   esac
 }
@@ -72,16 +71,16 @@ choose_download_source() {
   fi
   echo -e "${CYAN}[ClawPanel]${NC} 请选择下载线路："
   echo -e "  ${BOLD}1) GitHub${NC}      中国香港及境外服务器推荐"
-  echo -e "  ${BOLD}2) Gitee${NC}       中国大陆服务器推荐，更稳当一些"
+  echo -e "  ${BOLD}2) 加速服务器${NC}  中国大陆服务器推荐，更稳当一些"
   if [ -t 0 ]; then
     read -r -p "请输入 [1/2]（默认 2）: " source_choice
     case "$source_choice" in
       1) DOWNLOAD_SOURCE="github" ;;
-      2|"") DOWNLOAD_SOURCE="gitee" ;;
-      *) DOWNLOAD_SOURCE="gitee" ;;
+      2|"") DOWNLOAD_SOURCE="accel" ;;
+      *) DOWNLOAD_SOURCE="accel" ;;
     esac
   else
-    DOWNLOAD_SOURCE="gitee"
+    DOWNLOAD_SOURCE="accel"
   fi
 }
 
@@ -103,9 +102,9 @@ download_with_selected_source() {
   secondary=$(other_source "$primary")
   if [ "$primary" = "github" ]; then
     primary_url="https://github.com/${REPO}/releases/download/${TAG_PREFIX}${VERSION}/${binary_file}"
-    secondary_url="${GITEE_RELEASE_BASE}/${TAG_PREFIX}${VERSION}/${binary_file}"
+    secondary_url="${ACCEL_BASE}/releases/${binary_file}"
   else
-    primary_url="${GITEE_RELEASE_BASE}/${TAG_PREFIX}${VERSION}/${binary_file}"
+    primary_url="${ACCEL_BASE}/releases/${binary_file}"
     secondary_url="https://github.com/${REPO}/releases/download/${TAG_PREFIX}${VERSION}/${binary_file}"
   fi
   if download_file "$primary_url" "$dest"; then
@@ -298,10 +297,10 @@ main() {
         DOWNLOAD_SOURCE_ACTUAL="local"
         info "已使用当前目录中的本地构建包进行安装。"
     elif [ "$DOWNLOAD_SOURCE" = "github" ]; then
-        info "已选择 GitHub（中国香港及境外服务器推荐），失败时自动回退到 Gitee。"
+        info "已选择 GitHub（中国香港及境外服务器推荐），失败时自动回退到加速服务器。"
         download_with_selected_source "$DOWNLOAD_SOURCE" "$BINARY_FILE" "${INSTALL_DIR}/${BINARY_NAME}" || err "下载失败！请检查网络连接。"
     else
-        info "已选择 Gitee（中国大陆服务器推荐），失败时自动回退到 GitHub。"
+        info "已选择加速服务器（中国大陆服务器推荐），失败时自动回退到 GitHub。"
         download_with_selected_source "$DOWNLOAD_SOURCE" "$BINARY_FILE" "${INSTALL_DIR}/${BINARY_NAME}" || err "下载失败！请检查网络连接。"
     fi
 
