@@ -24,16 +24,42 @@ var clawHubHTTPClient = &http.Client{Timeout: 20 * time.Second}
 var clawHubSlugRegexp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const (
-	defaultClawHubRegistryBase       = "https://clawhub.ai"
-	maxClawHubArchiveBytes     int64 = 32 << 20
-	maxClawHubArchiveEntries         = 512
-	maxClawHubEntryBytes       int64 = 8 << 20
-	maxClawHubExtractedBytes   int64 = 64 << 20
+	defaultClawHubRegistryBase           = "https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel-Plugins/main"
+	defaultClawHubRegistryFallback       = "https://gitee.com/zxy000006/ClawPanel-Plugins/raw/main"
+	defaultClawHubPublicBase             = "https://github.com/zhaoxinyi02/ClawPanel-Plugins/tree/main"
+	maxClawHubArchiveBytes         int64 = 32 << 20
+	maxClawHubArchiveEntries             = 512
+	maxClawHubEntryBytes           int64 = 8 << 20
+	maxClawHubExtractedBytes       int64 = 64 << 20
 )
 
 type clawHubRegistryConfig struct {
-	RequestBase string
-	PublicBase  string
+	RequestBase         string
+	FallbackRequestBase string
+	PublicBase          string
+}
+
+type customSkillRegistry struct {
+	GeneratedAt string                    `json:"generated_at"`
+	Skills      []customSkillRegistryItem `json:"skills"`
+}
+
+type customSkillRegistryItem struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Version     string   `json:"version"`
+	Author      string   `json:"author,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	UpdatedAt   int64    `json:"updated_at,omitempty"`
+	Path        string   `json:"path,omitempty"`
+	Files       []string `json:"files,omitempty"`
+	Homepage    string   `json:"homepage,omitempty"`
+	Requires    struct {
+		Env     []string `json:"env,omitempty"`
+		Bins    []string `json:"bins,omitempty"`
+		AnyBins []string `json:"anyBins,omitempty"`
+	} `json:"requires,omitempty"`
 }
 
 type clawHubSkillItem struct {
@@ -142,7 +168,7 @@ func SearchClawHub(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		items, total, err := fetchClawHubItems(registry.RequestBase, query, limit, page)
+		items, total, err := fetchClawHubItems(registry, query, limit, page)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
 			return
@@ -350,13 +376,9 @@ func InstallClawHubSkill(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		meta, err := fetchClawHubSkill(registry.RequestBase, slug)
+		meta, err := fetchClawHubSkill(registry, slug)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
-			return
-		}
-		if meta.Skill != nil && meta.Skill.Moderation != nil && meta.Skill.Moderation.IsMalwareBlocked {
-			c.JSON(http.StatusForbidden, gin.H{"ok": false, "error": fmt.Sprintf("skill %s is blocked by ClawHub moderation", slug)})
 			return
 		}
 		version := strings.TrimSpace(req.Version)
@@ -368,15 +390,23 @@ func InstallClawHubSkill(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		archiveBytes, err := downloadClawHubArchive(registry.RequestBase, slug, version)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
-			return
-		}
-		if err := extractClawHubArchive(skillDir, archiveBytes); err != nil {
-			_ = os.RemoveAll(skillDir)
-			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
-			return
+		if usesCustomSkillRegistry(registry) {
+			if err := downloadCustomSkillFiles(registry, slug, skillDir); err != nil {
+				_ = os.RemoveAll(skillDir)
+				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+				return
+			}
+		} else {
+			archiveBytes, err := downloadClawHubArchive(registry.RequestBase, slug, version)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
+				return
+			}
+			if err := extractClawHubArchive(skillDir, archiveBytes); err != nil {
+				_ = os.RemoveAll(skillDir)
+				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+				return
+			}
 		}
 
 		installedAt := time.Now().UnixMilli()
@@ -402,7 +432,81 @@ func InstallClawHubSkill(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-func fetchClawHubItems(registryBase, query string, limit, page int) ([]clawHubSkillItem, int, error) {
+func fetchClawHubItems(registry clawHubRegistryConfig, query string, limit, page int) ([]clawHubSkillItem, int, error) {
+	if !usesCustomSkillRegistry(registry) {
+		return fetchLegacyClawHubItems(registry.RequestBase, query, limit, page)
+	}
+	catalog, err := fetchCustomSkillRegistry(registry)
+	if err != nil {
+		return nil, 0, err
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	items := make([]clawHubSkillItem, 0, len(catalog.Skills))
+	for _, skill := range catalog.Skills {
+		if q != "" {
+			haystack := strings.ToLower(strings.Join([]string{skill.ID, skill.Name, skill.Description, strings.Join(skill.Tags, " ")}, " "))
+			if !strings.Contains(haystack, q) {
+				continue
+			}
+		}
+		items = append(items, clawHubSkillItem{
+			ID:          skill.ID,
+			Name:        firstNonEmpty(skill.Name, skill.ID),
+			Description: skill.Description,
+			Version:     skill.Version,
+			UpdatedAt:   skill.UpdatedAt,
+		})
+	}
+	total := len(items)
+	if limit <= 0 {
+		limit = 30
+	}
+	start := (page - 1) * limit
+	if start >= total {
+		return []clawHubSkillItem{}, total, nil
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	return items[start:end], total, nil
+}
+
+func fetchClawHubSkill(registry clawHubRegistryConfig, slug string) (*clawHubSkillResponse, error) {
+	if !usesCustomSkillRegistry(registry) {
+		return fetchLegacyClawHubSkill(registry.RequestBase, slug)
+	}
+	catalog, err := fetchCustomSkillRegistry(registry)
+	if err != nil {
+		return nil, err
+	}
+	for _, skill := range catalog.Skills {
+		if skill.ID != slug {
+			continue
+		}
+		payload := &clawHubSkillResponse{}
+		payload.Skill = &struct {
+			Slug        string `json:"slug"`
+			DisplayName string `json:"displayName"`
+			Summary     string `json:"summary"`
+			Moderation  *struct {
+				IsMalwareBlocked bool `json:"isMalwareBlocked"`
+			} `json:"moderation"`
+		}{Slug: skill.ID, DisplayName: skill.Name, Summary: skill.Description}
+		payload.LatestVersion = &struct {
+			Version string `json:"version"`
+		}{Version: skill.Version}
+		return payload, nil
+	}
+	return nil, fmt.Errorf("skill %s not found in registry", slug)
+}
+
+func usesCustomSkillRegistry(registry clawHubRegistryConfig) bool {
+	base := strings.ToLower(strings.TrimSpace(registry.RequestBase))
+	return strings.Contains(base, "clawpanel-plugins") || strings.Contains(base, "/raw/") || strings.Contains(base, "raw.githubusercontent.com")
+}
+
+func fetchLegacyClawHubItems(registryBase, query string, limit, page int) ([]clawHubSkillItem, int, error) {
 	offset := (page - 1) * limit
 	if strings.TrimSpace(query) == "" {
 		resp, err := clawHubHTTPClient.Get(registryBase + "/api/v1/skills?limit=" + strconv.Itoa(limit) + "&offset=" + strconv.Itoa(offset) + "&sort=downloads")
@@ -424,17 +528,10 @@ func fetchClawHubItems(registryBase, query string, limit, page int) ([]clawHubSk
 			if item.LatestVersion != nil {
 				version = strings.TrimSpace(item.LatestVersion.Version)
 			}
-			items = append(items, clawHubSkillItem{
-				ID:          item.Slug,
-				Name:        firstNonEmpty(item.DisplayName, item.Slug),
-				Description: item.Summary,
-				Version:     version,
-				UpdatedAt:   item.UpdatedAt,
-			})
+			items = append(items, clawHubSkillItem{ID: item.Slug, Name: firstNonEmpty(item.DisplayName, item.Slug), Description: item.Summary, Version: version, UpdatedAt: item.UpdatedAt})
 		}
 		return items, payload.Total, nil
 	}
-
 	values := url.Values{}
 	values.Set("q", query)
 	values.Set("limit", strconv.Itoa(limit))
@@ -454,18 +551,12 @@ func fetchClawHubItems(registryBase, query string, limit, page int) ([]clawHubSk
 	}
 	items := make([]clawHubSkillItem, 0, len(payload.Results))
 	for _, item := range payload.Results {
-		items = append(items, clawHubSkillItem{
-			ID:          item.Slug,
-			Name:        firstNonEmpty(item.DisplayName, item.Slug),
-			Description: item.Summary,
-			Version:     item.Version,
-			UpdatedAt:   item.UpdatedAt,
-		})
+		items = append(items, clawHubSkillItem{ID: item.Slug, Name: firstNonEmpty(item.DisplayName, item.Slug), Description: item.Summary, Version: item.Version, UpdatedAt: item.UpdatedAt})
 	}
 	return items, payload.Total, nil
 }
 
-func fetchClawHubSkill(registryBase, slug string) (*clawHubSkillResponse, error) {
+func fetchLegacyClawHubSkill(registryBase, slug string) (*clawHubSkillResponse, error) {
 	resp, err := clawHubHTTPClient.Get(registryBase + "/api/v1/skills/" + url.PathEscape(slug))
 	if err != nil {
 		return nil, fmt.Errorf("get clawhub skill %s: request failed", slug)
@@ -480,6 +571,124 @@ func fetchClawHubSkill(registryBase, slug string) (*clawHubSkillResponse, error)
 		return nil, fmt.Errorf("decode clawhub skill %s: %w", slug, err)
 	}
 	return &payload, nil
+}
+
+func fetchCustomSkillRegistry(registry clawHubRegistryConfig) (*customSkillRegistry, error) {
+	var lastErr error
+	for _, base := range []string{registry.RequestBase, registry.FallbackRequestBase} {
+		base = strings.TrimSpace(strings.TrimRight(base, "/"))
+		if base == "" {
+			continue
+		}
+		resp, err := clawHubHTTPClient.Get(base + "/skills/registry.json")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			lastErr = fmt.Errorf("fetch custom registry: %s", strings.TrimSpace(string(body)))
+			continue
+		}
+		var catalog customSkillRegistry
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxClawHubArchiveBytes)).Decode(&catalog); err != nil {
+			resp.Body.Close()
+			lastErr = err
+			continue
+		}
+		resp.Body.Close()
+		return &catalog, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("failed to load custom skill registry")
+	}
+	return nil, lastErr
+}
+
+func downloadCustomSkillFiles(registry clawHubRegistryConfig, slug, targetDir string) error {
+	catalog, err := fetchCustomSkillRegistry(registry)
+	if err != nil {
+		return err
+	}
+	var item *customSkillRegistryItem
+	for i := range catalog.Skills {
+		if catalog.Skills[i].ID == slug {
+			item = &catalog.Skills[i]
+			break
+		}
+	}
+	if item == nil {
+		return fmt.Errorf("skill %s not found in registry", slug)
+	}
+	files := item.Files
+	if len(files) == 0 {
+		files = []string{"SKILL.md"}
+	}
+	pathPrefix := strings.Trim(strings.TrimSpace(item.Path), "/")
+	if pathPrefix == "" {
+		pathPrefix = "skills/" + item.ID
+	}
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+	foundSkill := false
+	for _, rel := range files {
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		if rel == "" || strings.Contains(rel, "..") || strings.HasPrefix(rel, "/") {
+			return fmt.Errorf("invalid skill file path %s", rel)
+		}
+		targetPath := filepath.Join(targetDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return err
+		}
+		var lastErr error
+		for _, base := range []string{registry.RequestBase, registry.FallbackRequestBase} {
+			base = strings.TrimSpace(strings.TrimRight(base, "/"))
+			if base == "" {
+				continue
+			}
+			resp, err := clawHubHTTPClient.Get(base + "/" + pathPrefix + "/" + rel)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+				resp.Body.Close()
+				lastErr = fmt.Errorf("download %s: %s", rel, strings.TrimSpace(string(body)))
+				continue
+			}
+			f, err := os.Create(targetPath)
+			if err != nil {
+				resp.Body.Close()
+				return err
+			}
+			_, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxClawHubEntryBytes+1))
+			closeErr := f.Close()
+			resp.Body.Close()
+			if copyErr != nil {
+				lastErr = copyErr
+				continue
+			}
+			if closeErr != nil {
+				lastErr = closeErr
+				continue
+			}
+			lastErr = nil
+			break
+		}
+		if lastErr != nil {
+			return lastErr
+		}
+		if rel == "SKILL.md" {
+			foundSkill = true
+		}
+	}
+	if !foundSkill {
+		return fmt.Errorf("skill %s missing SKILL.md", slug)
+	}
+	return nil
 }
 
 func downloadClawHubArchive(registryBase, slug, version string) ([]byte, error) {
@@ -761,6 +970,7 @@ func readClawHubOriginEntry(skillDir string) clawHubLockEntry {
 func resolveClawHubRegistryConfig() (clawHubRegistryConfig, error) {
 	rawRegistry := strings.TrimRight(strings.TrimSpace(os.Getenv("CLAWHUB_REGISTRY")), "/")
 	rawSite := strings.TrimRight(strings.TrimSpace(os.Getenv("CLAWHUB_SITE")), "/")
+	fallbackRaw := strings.TrimRight(strings.TrimSpace(os.Getenv("CLAWHUB_REGISTRY_FALLBACK")), "/")
 
 	requestRaw := firstNonEmpty(rawRegistry, rawSite, defaultClawHubRegistryBase)
 	requestSource := "default ClawHub registry"
@@ -777,7 +987,7 @@ func resolveClawHubRegistryConfig() (clawHubRegistryConfig, error) {
 	publicRaw := rawSite
 	publicSource := "CLAWHUB_SITE"
 	if publicRaw == "" {
-		publicRaw = requestRaw
+		publicRaw = defaultClawHubPublicBase
 		publicSource = requestSource
 	}
 	publicURL, err := parseClawHubBaseURL(publicRaw, publicSource)
@@ -786,8 +996,9 @@ func resolveClawHubRegistryConfig() (clawHubRegistryConfig, error) {
 	}
 	publicURL.User = nil
 	return clawHubRegistryConfig{
-		RequestBase: requestURL.String(),
-		PublicBase:  publicURL.String(),
+		RequestBase:         requestURL.String(),
+		FallbackRequestBase: firstNonEmpty(fallbackRaw, defaultClawHubRegistryFallback),
+		PublicBase:          firstNonEmpty(publicURL.String(), defaultClawHubPublicBase),
 	}, nil
 }
 
