@@ -7,6 +7,7 @@ GLOBAL_NODE_ROOT=${GLOBAL_NODE_ROOT:-}
 OPENCLAW_CONFIG_ROOT=${OPENCLAW_CONFIG_ROOT:-"$HOME/openclaw/config"}
 PLUGIN_REPO_ROOT=${PLUGIN_REPO_ROOT:-"$HOME/ClawPanel-Plugins/official"}
 OPENCLAW_APP_ROOT=${OPENCLAW_APP_ROOT:-"/usr/lib/node_modules/openclaw"}
+TARGET_OS=${TARGET_OS:-linux}
 TMP_NPM_DIR=${TMP_NPM_DIR:-$(mktemp -d)}
 
 cleanup() {
@@ -90,23 +91,30 @@ fi
 
 echo "==> 安装 Lite 预置插件候选 npm 包"
 npm install --omit=dev --registry=https://registry.npmmirror.com --prefix "$TMP_NPM_DIR" \
+  clawdbot-dingtalk@0.4.6 \
   @sliverp/qqbot@1.5.3 \
   @wecom/wecom-openclaw-plugin@1.0.6 >/dev/null
 
-copy_dir "qq" \
-  "$PLUGIN_REPO_ROOT/qq" \
-  "$OPENCLAW_CONFIG_ROOT/extensions/qq"
+if [[ "$TARGET_OS" == "linux" ]]; then
+  copy_dir "qq" \
+    "$PLUGIN_REPO_ROOT/qq" \
+    "$OPENCLAW_CONFIG_ROOT/extensions/qq"
+fi
 copy_npm_pkg "@sliverp/qqbot@1.5.3" "@sliverp/qqbot" "qqbot"
 copy_npm_pkg "@wecom/wecom-openclaw-plugin@1.0.6" "@wecom/wecom-openclaw-plugin" "wecom"
 if [[ -f "$OUT_DIR/wecom/openclaw.plugin.json" ]]; then
   rewrite_wecom_manifest
 fi
-copy_dir "wecom-app" \
-  "$GLOBAL_NODE_ROOT/@openclaw-china/wecom-app" \
-  "$OPENCLAW_CONFIG_ROOT/extensions/wecom-app"
-copy_dir "dingtalk" \
-  "$OPENCLAW_CONFIG_ROOT/extensions/dingtalk" \
-  "$PLUGIN_REPO_ROOT/dingtalk" \
-  "$OPENCLAW_CONFIG_ROOT/extensions/dingtalk"
+if [[ "$TARGET_OS" == "linux" ]]; then
+  copy_dir "wecom-app" \
+    "$GLOBAL_NODE_ROOT/@openclaw-china/wecom-app" \
+    "$OPENCLAW_CONFIG_ROOT/extensions/wecom-app"
+  copy_dir "dingtalk" \
+    "$OPENCLAW_CONFIG_ROOT/extensions/dingtalk" \
+    "$PLUGIN_REPO_ROOT/dingtalk" \
+    "$OPENCLAW_CONFIG_ROOT/extensions/dingtalk"
+else
+  copy_npm_pkg "clawdbot-dingtalk@0.4.6" "clawdbot-dingtalk" "dingtalk"
+fi
 
 echo "Lite 预置插件目录已输出到: $OUT_DIR"

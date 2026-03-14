@@ -524,6 +524,9 @@ func normalizeFeishuRequireMention(raw interface{}) (bool, bool, error) {
 		switch {
 		case trimmed == "":
 			return false, false, nil
+		case strings.EqualFold(trimmed, "open"), strings.EqualFold(trimmed, "allowlist"), strings.EqualFold(trimmed, "closed"):
+			// 兼容旧的误写：这些值属于 groupPolicy，不属于 requireMention。
+			return false, false, nil
 		case strings.EqualFold(trimmed, "true"):
 			return true, true, nil
 		case strings.EqualFold(trimmed, "false"):

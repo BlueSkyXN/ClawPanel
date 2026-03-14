@@ -224,6 +224,14 @@ func (c *Config) BundledOpenClawAppDir() string {
 	return filepath.Join(root, "openclaw")
 }
 
+func (c *Config) BundledOpenClawWorkingDir() string {
+	app := strings.TrimSpace(c.BundledOpenClawAppDir())
+	if app != "" {
+		return app
+	}
+	return c.OpenClawDir
+}
+
 func (c *Config) BundledOpenClawEntrypoint() string {
 	app := c.BundledOpenClawAppDir()
 	for _, candidate := range []string{
@@ -269,6 +277,18 @@ func (c *Config) BundledNodeBinaryPath() string {
 	return ""
 }
 
+func (c *Config) BundledOpenClawLauncherPath() string {
+	for _, candidate := range []string{
+		filepath.Join(c.InstallRoot(), "bin", "clawlite-openclaw"),
+		filepath.Join(c.InstallRoot(), "bin", "clawlite-openclaw.cmd"),
+	} {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func (c *Config) DefaultGatewayPort() int {
 	if c.IsLiteEdition() {
 		return 18790
@@ -278,6 +298,11 @@ func (c *Config) DefaultGatewayPort() int {
 
 func (c *Config) OpenClawCommand(args ...string) (*exec.Cmd, error) {
 	if c.IsLiteEdition() {
+		if launcher := c.BundledOpenClawLauncherPath(); launcher != "" {
+			cmd := exec.Command(launcher, args...)
+			cmd.Dir = c.BundledOpenClawWorkingDir()
+			return cmd, nil
+		}
 		entry := c.BundledOpenClawEntrypoint()
 		if strings.HasSuffix(entry, ".mjs") {
 			node := c.BundledNodeBinaryPath()
@@ -285,10 +310,13 @@ func (c *Config) OpenClawCommand(args ...string) (*exec.Cmd, error) {
 				return nil, fmt.Errorf("Lite 版未找到内置 Node.js 运行时")
 			}
 			cmd := exec.Command(node, append([]string{entry}, args...)...)
+			cmd.Dir = c.BundledOpenClawWorkingDir()
 			return cmd, nil
 		}
 		if fileExists(entry) {
-			return exec.Command(entry, args...), nil
+			cmd := exec.Command(entry, args...)
+			cmd.Dir = c.BundledOpenClawWorkingDir()
+			return cmd, nil
 		}
 	}
 	if bin := DetectOpenClawBinaryPath(); bin != "" {
@@ -954,6 +982,28 @@ func (c *Config) OpenClawConfigExists() bool {
 // OpenClawInstalled 检查 OpenClaw 是否已安装（配置文件存在 或 二进制可执行）
 // 解决 npm 安装后配置文件尚未生成但二进制已可用的情况
 func (c *Config) OpenClawInstalled() bool {
+	if c.IsLiteEdition() {
+		if c.OpenClawConfigExists() {
+			return true
+		}
+		if c.OpenClawApp != "" {
+			if _, err := os.Stat(filepath.Join(c.OpenClawApp, "package.json")); err == nil {
+				return true
+			}
+		}
+		if launcher := c.BundledOpenClawLauncherPath(); launcher != "" {
+			return true
+		}
+		entry := c.BundledOpenClawEntrypoint()
+		if fileExists(entry) {
+			return true
+		}
+		if entry != "" && strings.HasSuffix(entry, ".mjs") && c.BundledNodeBinaryPath() != "" {
+			return true
+		}
+		return false
+	}
+
 	// 1. 配置文件存在
 	if c.OpenClawConfigExists() {
 		return true

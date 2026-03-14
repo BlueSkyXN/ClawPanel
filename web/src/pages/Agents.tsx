@@ -1738,7 +1738,8 @@ function AgentsPage() {
     if (!force && coreFilesByAgent[agentId]) return;
     setCoreFilesLoading(true);
     try {
-      const response = await api.getAgentCoreFiles(agentId);
+      const workspaceOverride = editingId === agentId ? form.workspace.trim() || undefined : undefined;
+      const response = await api.getAgentCoreFiles(agentId, workspaceOverride);
       if (response?.ok) {
         setCoreFilesByAgent(prev => ({ ...prev, [agentId]: response.files || [] }));
         setCoreFilesStateByAgent(prev => ({
@@ -2518,7 +2519,7 @@ function AgentsPage() {
     try {
       let files = coreFilesByAgent[agentId];
       if (!files) {
-        const response = await api.getAgentCoreFiles(agentId);
+        const response = await api.getAgentCoreFiles(agentId, form.workspace.trim() || undefined);
         if (!response?.ok) {
           const error = String(response?.error || '无法读取 IDENTITY.md');
           setCoreFilesStateByAgent(prev => ({ ...prev, [agentId]: classifyCoreFilesLoadState(error, String(response?.workspace || '').trim() || undefined) }));

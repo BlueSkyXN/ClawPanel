@@ -2112,15 +2112,15 @@ func TestValidateAgentUniquenessNormalizesPaths(t *testing.T) {
 	}
 }
 
-func TestValidateAgentUniquenessAllowsAgentDirOutsideBase(t *testing.T) {
+func TestValidateAgentUniquenessRejectsAgentDirOutsideBase(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
 	cfg := &config.Config{OpenClawDir: base}
 	external := filepath.Join(t.TempDir(), "isolated-agent")
 	err := validateAgentUniqueness(cfg, []map[string]interface{}{{"id": "main"}}, "work", "workspace/work", external, "")
-	if err != nil {
-		t.Fatalf("expected external agentDir to be accepted, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "agentDir 必须位于 OpenClaw 目录内") {
+		t.Fatalf("expected external agentDir to be rejected, got %v", err)
 	}
 }
 
@@ -2156,6 +2156,62 @@ func TestResolveAgentSessionsDirIgnoresConfiguredExternalAgentDir(t *testing.T) 
 	want := filepath.Join(dir, "agents", "work", "sessions")
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestGetSessionDetailUsesRecordedSessionFilePath(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "work",
+			"list": []interface{}{
+				map[string]interface{}{"id": "work"},
+			},
+		},
+	})
+
+	sessionFile := filepath.Join(dir, "agents", "work", "sessions", "s_work.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionFile), 0755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	if err := os.WriteFile(sessionFile, []byte(`{"type":"assistant","id":"2","message":{"role":"assistant","content":"hello"}}`+"\n"), 0644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	writeJSON(t, filepath.Join(dir, "agents", "work", "sessions", "sessions.json"), map[string]interface{}{
+		"work-key": map[string]interface{}{
+			"sessionId":   "session-work",
+			"chatType":    "group",
+			"updatedAt":   float64(2000),
+			"sessionFile": sessionFile,
+		},
+	})
+
+	r := gin.New()
+	r.GET("/sessions/:id", GetSessionDetail(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/sessions/session-work?agent=work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK       bool                     `json:"ok"`
+		Messages []map[string]interface{} `json:"messages"`
+		Error    string                   `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.OK || resp.Error != "" {
+		t.Fatalf("expected successful session detail, got %+v", resp)
+	}
+	if len(resp.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %+v", resp.Messages)
 	}
 }
 
@@ -3619,6 +3675,30 @@ func TestSaveBindingsRemovesLegacyAgentsBindingsKey(t *testing.T) {
 	match, _ := binding["match"].(map[string]interface{})
 	if got := strings.TrimSpace(getString(match, "channel")); got != "qq" {
 		t.Fatalf("expected saved binding channel=qq, got %#v", match["channel"])
+	}
+}
+
+func TestGetBindingsFromConfigFallsBackToLegacyWhenTopLevelBindingsEmpty(t *testing.T) {
+	t.Parallel()
+
+	ocConfig := map[string]interface{}{
+		"bindings": []interface{}{},
+	}
+	agentsCfg := map[string]interface{}{
+		"bindings": []interface{}{
+			map[string]interface{}{
+				"agentId": "main",
+				"match":   map[string]interface{}{"channel": "qq"},
+			},
+		},
+	}
+
+	bindings := getBindingsFromConfig(ocConfig, agentsCfg)
+	if len(bindings) != 1 {
+		t.Fatalf("expected legacy agents.bindings fallback, got %#v", bindings)
+	}
+	if got := extractBindingAgentID(bindings[0]); got != "main" {
+		t.Fatalf("unexpected binding fallback payload: %#v", bindings[0])
 	}
 }
 

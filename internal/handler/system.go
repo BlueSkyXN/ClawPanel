@@ -255,6 +255,28 @@ func restartGatewayViaCLI(cfg *config.Config, procMgr *process.Manager) error {
 
 func candidateOpenClawBins(cfg *config.Config) []string {
 	bins := []string{}
+	if cfg != nil && cfg.IsLiteEdition() {
+		if launcher := cfg.BundledOpenClawLauncherPath(); launcher != "" {
+			bins = append(bins, launcher)
+		}
+		if entry := strings.TrimSpace(cfg.BundledOpenClawEntrypoint()); entry != "" {
+			bins = append(bins, entry)
+		}
+		seen := map[string]struct{}{}
+		uniq := make([]string, 0, len(bins))
+		for _, bin := range bins {
+			bin = strings.TrimSpace(bin)
+			if bin == "" {
+				continue
+			}
+			if _, ok := seen[bin]; ok {
+				continue
+			}
+			seen[bin] = struct{}{}
+			uniq = append(uniq, bin)
+		}
+		return uniq
+	}
 	if p := config.DetectOpenClawBinaryPath(); p != "" {
 		bins = append(bins, p)
 	}
@@ -321,7 +343,11 @@ func restartGatewayWithBinary(cfg *config.Config, procMgr *process.Manager, bin 
 	startErrs := make([]string, 0, len(startVariants))
 	for _, args := range startVariants {
 		cmd := exec.Command(bin, args...)
-		cmd.Dir = cfg.OpenClawDir
+		if cfg != nil && cfg.IsLiteEdition() {
+			cmd.Dir = cfg.BundledOpenClawWorkingDir()
+		} else {
+			cmd.Dir = cfg.OpenClawDir
+		}
 		cmd.Env = env
 		if err := cmd.Start(); err != nil {
 			startErrs = append(startErrs, fmt.Sprintf("%s: %v", strings.Join(args, " "), err))
@@ -352,7 +378,11 @@ func runGatewayCommand(cfg *config.Config, env []string, bin string, args ...str
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = cfg.OpenClawDir
+	if cfg != nil && cfg.IsLiteEdition() {
+		cmd.Dir = cfg.BundledOpenClawWorkingDir()
+	} else {
+		cmd.Dir = cfg.OpenClawDir
+	}
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -467,6 +497,23 @@ func CheckUpdate(cfg *config.Config) gin.HandlerFunc {
 }
 
 func resolveOpenClawCurrentVersion(cfg *config.Config) string {
+	if cfg != nil && cfg.IsLiteEdition() {
+		if v := normalizeVersion(detectOpenClawVersion(cfg)); v != "" {
+			return v
+		}
+		ocConfig, _ := cfg.ReadOpenClawJSON()
+		if ocConfig != nil {
+			if meta, ok := ocConfig["meta"].(map[string]interface{}); ok {
+				if v, ok := meta["lastTouchedVersion"].(string); ok {
+					if vv := normalizeVersion(v); vv != "" {
+						return vv
+					}
+				}
+			}
+		}
+		return "unknown"
+	}
+
 	// Prefer live CLI version first: this reflects what users see in terminal
 	// and avoids stale values from historical config/app paths.
 	if out := runCmd("openclaw", "--version"); out != "" {

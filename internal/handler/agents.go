@@ -690,12 +690,18 @@ func parseBindings(v interface{}) []map[string]interface{} {
 func getBindingsFromConfig(ocConfig, agentsCfg map[string]interface{}) []map[string]interface{} {
 	if ocConfig != nil {
 		if _, ok := ocConfig["bindings"]; ok {
-			return parseBindings(ocConfig["bindings"])
+			parsed := parseBindings(ocConfig["bindings"])
+			if len(parsed) > 0 {
+				return parsed
+			}
 		}
 	}
 	if agentsCfg != nil {
 		if _, ok := agentsCfg["bindings"]; ok {
-			return parseBindings(agentsCfg["bindings"])
+			parsed := parseBindings(agentsCfg["bindings"])
+			if len(parsed) > 0 {
+				return parsed
+			}
 		}
 	}
 	return []map[string]interface{}{}
@@ -878,7 +884,13 @@ func shouldStrictValidateAgentAvatar(existingAgent, payload map[string]interface
 func validateAgentUniqueness(cfg *config.Config, list []map[string]interface{}, id, workspace, agentDir, skipID string) error {
 	// workspace 允许绝对路径在 OpenClawDir 外部（如外部硬盘），仅做归一化
 	workspace = normalizeAgentPath(cfg.OpenClawDir, workspace)
-	agentDir = normalizeAgentPath(cfg.OpenClawDir, agentDir)
+	if agentDir != "" {
+		normalizedAgentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, agentDir)
+		if err != nil {
+			return fmt.Errorf("agentDir 必须位于 OpenClaw 目录内")
+		}
+		agentDir = normalizedAgentDir
+	}
 	canonicalAgentDir := canonicalizeNormalizedAgentDir(agentDir)
 	for _, item := range list {
 		curID := strings.TrimSpace(toString(item["id"]))
@@ -892,7 +904,10 @@ func validateAgentUniqueness(cfg *config.Config, list []map[string]interface{}, 
 		if workspace != "" && workspace == normalizedWorkspace {
 			return fmt.Errorf("workspace 已被占用: %s", workspace)
 		}
-		normalizedAgentDir := normalizeAgentPath(cfg.OpenClawDir, toString(item["agentDir"]))
+		normalizedAgentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["agentDir"]))
+		if err != nil {
+			continue
+		}
 		canonicalExistingAgentDir := canonicalizeNormalizedAgentDir(normalizedAgentDir)
 		if agentDir != "" && (agentDir == normalizedAgentDir ||
 			canonicalAgentDir == canonicalExistingAgentDir ||

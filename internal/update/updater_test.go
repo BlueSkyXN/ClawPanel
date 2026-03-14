@@ -85,6 +85,18 @@ func TestStatusAndErrorTransitions(t *testing.T) {
 	}
 }
 
+func TestDoUpdateRejectsLiteFullPackageMode(t *testing.T) {
+	updater := NewUpdater("v0.1.9", t.TempDir(), "lite")
+	updater.DoUpdate(&UpdateInfo{LatestVersion: "0.1.10"})
+	progress := updater.GetProgress()
+	if progress.Status != "error" {
+		t.Fatalf("status = %q, want error", progress.Status)
+	}
+	if !strings.Contains(progress.Error, "Lite 版请使用整包更新入口") {
+		t.Fatalf("unexpected error: %q", progress.Error)
+	}
+}
+
 func TestVersionAndFileHelpers(t *testing.T) {
 	tests := []struct {
 		latest  string

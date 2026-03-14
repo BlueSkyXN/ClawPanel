@@ -10,7 +10,7 @@ type editionConfig struct {
 	Edition           string
 	ServiceName       string
 	BinaryName        string
-	UpdateCheckURL    string
+	AccelUpdateURL    string
 	GitHubReleasesAPI string
 	GitHubTagPrefix   string
 }
@@ -21,7 +21,7 @@ func newEditionConfig(edition string) editionConfig {
 			Edition:           "lite",
 			ServiceName:       "clawpanel-lite",
 			BinaryName:        "clawpanel-lite",
-			UpdateCheckURL:    "http://39.102.53.188:16198/clawpanel/update-lite.json",
+			AccelUpdateURL:    "http://47.76.58.84:16198/clawpanel/update-lite.json",
 			GitHubReleasesAPI: "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases?per_page=20",
 			GitHubTagPrefix:   "lite-v",
 		}
@@ -30,7 +30,7 @@ func newEditionConfig(edition string) editionConfig {
 		Edition:           "pro",
 		ServiceName:       "clawpanel",
 		BinaryName:        "clawpanel",
-		UpdateCheckURL:    "http://39.102.53.188:16198/clawpanel/update-pro.json",
+		AccelUpdateURL:    "http://47.76.58.84:16198/clawpanel/update-pro.json",
 		GitHubReleasesAPI: "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases?per_page=20",
 		GitHubTagPrefix:   "pro-v",
 	}
@@ -68,10 +68,11 @@ func (c editionConfig) binaryAssetName(version, platformKey string) string {
 }
 
 func (c editionConfig) liteCoreAssetName(version, platformKey string) string {
-	if platformKey != "linux_amd64" {
+	suffix := strings.ReplaceAll(platformKey, "_", "-")
+	if strings.TrimSpace(suffix) == "" {
 		return ""
 	}
-	return fmt.Sprintf("clawpanel-lite-core-v%s-linux-amd64.tar.gz", version)
+	return fmt.Sprintf("clawpanel-lite-core-v%s-%s.tar.gz", version, suffix)
 }
 
 func (c editionConfig) updateAssetName(version, platformKey string) string {

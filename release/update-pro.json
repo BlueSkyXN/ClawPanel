@@ -1,13 +1,13 @@
 {
-  "latest_version": "5.2.8",
-  "release_time": "2026-03-11T01:10:00+08:00",
-  "release_note": "## ClawPanel Pro v5.2.8\n\n- 增强 macOS OpenClaw 自动识别，补强 `/Users/*/.openclaw` 与真实用户 home 探测\n- 修复受管工作区兼容问题，并修正 MiniMax 默认 provider 配置\n- 安装与更新链路继续与 Lite / Pro 双发行形态保持一致",
+  "latest_version": "5.2.11",
+  "release_time": "2026-03-13T20:40:00+08:00",
+  "release_note": "## ClawPanel Pro v5.2.11\n\n- 前端页面懒加载，提升首屏加载速度\n- 修复 agent/channel 合并后的稳定性问题\n- CI 跨平台测试修复（macOS/Windows symlink）\n- 文档与安装脚本切换到 Gitee 入口",
   "download_urls": {
-    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.8-linux-amd64",
-    "linux_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.8-linux-arm64",
-    "darwin_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.8-darwin-amd64",
-    "darwin_arm64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.8-darwin-arm64",
-    "windows_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-v5.2.8-windows-amd64.exe"
+    "linux_amd64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-v5.2.11-linux-amd64",
+    "linux_arm64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-v5.2.11-linux-arm64",
+    "darwin_amd64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-v5.2.11-darwin-amd64",
+    "darwin_arm64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-v5.2.11-darwin-arm64",
+    "windows_amd64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-v5.2.11-windows-amd64.exe"
   },
   "major_change": false,
   "change_warning": ""

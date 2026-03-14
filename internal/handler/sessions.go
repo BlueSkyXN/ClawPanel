@@ -116,9 +116,9 @@ func GetSessionDetail(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		sessionsDir := resolveAgentSessionsDir(cfg, agentID)
-		sessionFile := filepath.Join(sessionsDir, sessionID+".jsonl")
+		sessionFile := resolveSessionTranscriptPath(sessionsDir, sessionID)
 
-		if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
+		if sessionFile == "" {
 			c.JSON(http.StatusOK, gin.H{"ok": true, "messages": []interface{}{}, "error": "会话文件不存在"})
 			return
 		}
@@ -247,6 +247,38 @@ func readSessionMessages(filePath string, limit int) ([]map[string]interface{}, 
 	}
 
 	return allMessages, nil
+}
+
+func resolveSessionTranscriptPath(sessionsDir, sessionID string) string {
+	if strings.TrimSpace(sessionsDir) == "" || strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	defaultPath := filepath.Join(sessionsDir, sessionID+".jsonl")
+	if _, err := os.Stat(defaultPath); err == nil {
+		return defaultPath
+	}
+	sessionsIndex := filepath.Join(sessionsDir, "sessions.json")
+	data, err := os.ReadFile(sessionsIndex)
+	if err != nil {
+		return ""
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ""
+	}
+	for _, val := range raw {
+		entry, ok := val.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if getString(entry, "sessionId") != sessionID {
+			continue
+		}
+		if sf := strings.TrimSpace(getString(entry, "sessionFile")); sf != "" {
+			return sf
+		}
+	}
+	return ""
 }
 
 func extractMessage(entry map[string]interface{}) map[string]interface{} {

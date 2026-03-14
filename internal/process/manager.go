@@ -50,15 +50,18 @@ type Manager struct {
 	maxLog             int
 	stopCh             chan struct{}
 	logReader          io.ReadCloser
+	crashRestarts      int // 连续异常重启计数，成功后重置
 }
+
+const maxCrashRestarts = 8
 
 const gatewayProbeCacheTTL = 3 * time.Second
 
 func gatewayStartupTimeout() time.Duration {
 	if runtime.GOOS == "windows" {
-		return 30 * time.Second
+		return 45 * time.Second
 	}
-	return 15 * time.Second
+	return 30 * time.Second
 }
 
 var (
@@ -107,7 +110,11 @@ func (m *Manager) Start() error {
 
 	// 构建启动命令
 	m.cmd = cmd
-	m.cmd.Dir = m.cfg.OpenClawDir
+	if m.cfg != nil && m.cfg.IsLiteEdition() {
+		m.cmd.Dir = m.cfg.BundledOpenClawWorkingDir()
+	} else {
+		m.cmd.Dir = m.cfg.OpenClawDir
+	}
 	m.cmd.Env = append(buildProcessEnv(),
 		fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
 		fmt.Sprintf("OPENCLAW_STATE_DIR=%s", m.cfg.OpenClawDir),
@@ -134,6 +141,7 @@ func (m *Manager) Start() error {
 		StartedAt: time.Now(),
 	}
 	m.daemonized = false
+	m.crashRestarts = 0
 	m.lastGatewayProbeAt = time.Time{}
 	m.lastGatewayProbeOK = false
 
@@ -173,7 +181,11 @@ func (m *Manager) Stop() error {
 
 	// First, ask OpenClaw CLI to stop the daemon gateway process.
 	if cmd, err := m.cfg.OpenClawCommand("gateway", "stop"); err == nil {
-		cmd.Dir = m.cfg.OpenClawDir
+		if m.cfg != nil && m.cfg.IsLiteEdition() {
+			cmd.Dir = m.cfg.BundledOpenClawWorkingDir()
+		} else {
+			cmd.Dir = m.cfg.OpenClawDir
+		}
 		cmd.Env = append(buildProcessEnv(),
 			fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
 			fmt.Sprintf("OPENCLAW_STATE_DIR=%s", m.cfg.OpenClawDir),
@@ -466,7 +478,7 @@ func (m *Manager) waitForExit() {
 		// process "openclaw-gateway" that holds the port, then the parent
 		// exits (often with code 1). If the gateway port is listening after
 		// the parent exits, the daemon started successfully.
-		if wasRunning && !daemonized && !startedAt.IsZero() && time.Since(startedAt) < 20*time.Second {
+		if wasRunning && !daemonized && !startedAt.IsZero() && time.Since(startedAt) < 60*time.Second {
 			if m.waitForGatewayReady(gatewayStartupTimeout()) {
 				log.Printf("[ProcessMgr] OpenClaw 父进程已退出但网关守护进程仍可探测（daemon fork 模式），视为正常")
 				m.mu.Lock()
@@ -476,6 +488,7 @@ func (m *Manager) waitForExit() {
 				m.status.Daemonized = true
 				m.cmd = nil
 				m.daemonized = true
+				m.crashRestarts = 0
 				m.mu.Unlock()
 				// Monitor the daemon process; when port goes down, restart
 				go m.monitorDaemon()
@@ -492,12 +505,25 @@ func (m *Manager) waitForExit() {
 			m.status.ManagedExternally = true
 			m.cmd = nil
 			m.daemonized = false
+			m.crashRestarts = 0
 			m.mu.Unlock()
 			return
 		}
 		if wasRunning && exitCode != 0 {
-			log.Println("[ProcessMgr] 检测到 OpenClaw 异常退出，3秒后自动重启...")
-			time.Sleep(2 * time.Second)
+			m.mu.Lock()
+			m.crashRestarts++
+			restartCount := m.crashRestarts
+			m.mu.Unlock()
+			if restartCount > maxCrashRestarts {
+				log.Printf("[ProcessMgr] OpenClaw 连续异常退出 %d 次，停止自动重启（请检查运行环境后手动启动）", restartCount)
+				return
+			}
+			delay := time.Duration(restartCount) * 3 * time.Second
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+			log.Printf("[ProcessMgr] 检测到 OpenClaw 异常退出（第 %d/%d 次），%v 后自动重启...", restartCount, maxCrashRestarts, delay)
+			time.Sleep(delay)
 			if err := m.Start(); err != nil {
 				log.Printf("[ProcessMgr] 自动重启失败: %v", err)
 			} else {
@@ -1625,6 +1651,16 @@ func (m *Manager) patchFeishuPluginChannel(ocDir string) {
 
 // findOpenClawBin 查找 openclaw 可执行文件
 func (m *Manager) findOpenClawBin() string {
+	if m.cfg != nil && m.cfg.IsLiteEdition() {
+		if launcher := m.cfg.BundledOpenClawLauncherPath(); launcher != "" {
+			return launcher
+		}
+		if entry := strings.TrimSpace(m.cfg.BundledOpenClawEntrypoint()); entry != "" {
+			return entry
+		}
+		return ""
+	}
+
 	if p := config.DetectOpenClawBinaryPath(); p != "" {
 		return p
 	}

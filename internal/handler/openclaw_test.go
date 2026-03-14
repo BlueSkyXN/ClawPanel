@@ -556,7 +556,7 @@ func TestPatchModelsJSONForAgentUsesConfiguredAgentDir(t *testing.T) {
 	}
 }
 
-func TestPatchModelsJSONForAgentUsesExternalNestedAgentDir(t *testing.T) {
+func TestPatchModelsJSONForAgentSkipsExternalNestedAgentDir(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -610,8 +610,8 @@ func TestPatchModelsJSONForAgentUsesExternalNestedAgentDir(t *testing.T) {
 	models, _ := provider["models"].([]interface{})
 	model, _ := models[0].(map[string]interface{})
 	compat, _ := model["compat"].(map[string]interface{})
-	if got, _ := compat["supportsDeveloperRole"].(bool); got {
-		t.Fatalf("expected compat.supportsDeveloperRole to be forced false")
+	if got, _ := compat["supportsDeveloperRole"].(bool); !got {
+		t.Fatalf("expected external agentDir models.json to remain untouched")
 	}
 }
 
@@ -1001,7 +1001,7 @@ func TestNormalizeFeishuChannelConfigDropsLegacyDMScope(t *testing.T) {
 	}
 }
 
-func TestNormalizeFeishuChannelConfigRejectsInvalidRequireMention(t *testing.T) {
+func TestNormalizeFeishuChannelConfigToleratesLegacyRequireMentionOpen(t *testing.T) {
 	t.Parallel()
 
 	input := map[string]interface{}{
@@ -1009,11 +1009,11 @@ func TestNormalizeFeishuChannelConfigRejectsInvalidRequireMention(t *testing.T) 
 	}
 
 	err := normalizeFeishuChannelConfigInPlace(input)
-	if err == nil {
-		t.Fatal("expected invalid requireMention to be rejected")
+	if err != nil {
+		t.Fatalf("expected legacy requireMention=open to be tolerated, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "requireMention") {
-		t.Fatalf("expected error to mention requireMention, got %v", err)
+	if _, exists := input["requireMention"]; exists {
+		t.Fatalf("expected legacy requireMention=open to be dropped, got %#v", input["requireMention"])
 	}
 }
 
@@ -1087,7 +1087,7 @@ func TestSaveChannelQQReturnsMessageWithoutProcessManager(t *testing.T) {
 	}
 }
 
-func TestSaveChannelRejectsInvalidFeishuRequireMention(t *testing.T) {
+func TestSaveChannelToleratesLegacyFeishuRequireMentionOpen(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
@@ -1102,11 +1102,8 @@ func TestSaveChannelRejectsInvalidFeishuRequireMention(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d, body=%s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "requireMention") {
-		t.Fatalf("expected error to mention requireMention, got %s", w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
 	}
 }
 

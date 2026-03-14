@@ -139,7 +139,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
           <input type="radio" name="download-source" value="accel">
           <div>
             <div class="source-title">加速服务器</div>
-            <div class="source-desc">中国大陆服务器推荐；更稳地访问北京加速分发节点。</div>
+            <div class="source-desc">中国大陆服务器推荐；直接从香港加速服务器获取更新包。</div>
           </div>
         </label>
       </div>

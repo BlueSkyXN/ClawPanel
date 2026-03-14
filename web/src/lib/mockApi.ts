@@ -162,6 +162,13 @@ const FAKE_CONFIG: any = {
       },
       dmPolicy: 'pairing',
     },
+    wecom: {
+      enabled: true,
+      botId: 'demo-bot-id',
+      secret: 'demo-secret',
+      dmPolicy: 'open',
+      allowFrom: ['*'],
+    },
   },
   session: {
     dmScope: 'per-peer',
@@ -169,6 +176,7 @@ const FAKE_CONFIG: any = {
   plugins: {
     entries: {
       feishu: { enabled: true },
+      wecom: { enabled: true },
     },
   },
   gateway: { wsUrl: 'ws://127.0.0.1:3001', accessToken: 'demo-token' },
@@ -455,10 +463,27 @@ export const mockApi = {
       napcat: { connected: true, selfId: '2854196310', nickname: 'OpenClaw Demo Bot', groupCount: 12, friendCount: 86 },
       wechat: { loggedIn: false },
       admin: { uptime: 172800, memoryMB: 256 },
-      openclaw: { configured: true, currentModel: 'deepseek/deepseek-chat', enabledChannels: [
-        { id: 'qq', label: 'QQ (NapCat)', type: 'builtin' },
-        { id: 'telegram', label: 'Telegram', type: 'plugin' },
-      ] },
+      gateway: { running: true },
+      process: { running: true, pid: 9527, uptime: 172800 },
+      panel: { edition: 'pro', version: '5.2.10' },
+      openclaw: {
+        configured: true,
+        edition: 'pro',
+        currentModel: 'deepseek/deepseek-chat',
+        enabledChannels: [
+          { id: 'qq', label: 'QQ (NapCat)', type: 'builtin' },
+          { id: 'telegram', label: 'Telegram', type: 'plugin' },
+        ],
+        runtime: {
+          state: 'healthy',
+          healthy: true,
+          degraded: false,
+          processRunning: true,
+          gatewayRunning: true,
+          title: 'OpenClaw 运行正常',
+          message: 'OpenClaw 与网关均在线，消息处理与配置写入可正常进行。',
+        },
+      },
     };
   },
   getOpenClawConfig: async () => { await delay(200); return { ok: true, config: JSON.parse(JSON.stringify(FAKE_CONFIG)) }; },
@@ -779,8 +804,8 @@ export const mockApi = {
   installSoftware: async (_software: string) => { await delay(3000); return { ok: true }; },
 
   // --- Panel Update ---
-  getPanelVersion: async () => { await delay(100); return { ok: true, version: '5.0.0', buildTime: new Date().toISOString() }; },
-  checkPanelUpdate: async () => { await delay(1000); return { ok: true, updateAvailable: false, currentVersion: '5.0.0', latestVersion: '5.0.0' }; },
+  getPanelVersion: async () => { await delay(100); return { ok: true, version: '5.2.10', edition: 'pro', buildTime: new Date().toISOString() }; },
+  checkPanelUpdate: async () => { await delay(1000); return { ok: true, hasUpdate: false, currentVersion: '5.2.10', latestVersion: '5.2.10', edition: 'pro' }; },
   doPanelUpdate: async () => { await delay(2000); return { ok: true }; },
   getPanelUpdateProgress: async () => { await delay(100); return { ok: true, status: 'idle', progress: 0 }; },
   generateUpdateToken: async () => { await delay(200); return { ok: true, token: 'demo-update-token' }; },

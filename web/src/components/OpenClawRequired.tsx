@@ -160,10 +160,6 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
 
   return (
     <div className="relative">
-      {/* Greyed out content */}
-      <div className="opacity-20 pointer-events-none select-none blur-[2px]">
-        {children}
-      </div>
       {/* Overlay */}
       <div className="absolute inset-0 flex items-center justify-center z-10">
         <div className="relative bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-8 max-w-md text-center space-y-4">

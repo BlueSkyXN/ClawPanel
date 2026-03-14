@@ -6,11 +6,13 @@ SERVICE_NAME="clawpanel-lite"
 BIN_NAME="clawpanel-lite"
 PORT="19527"
 REPO="zhaoxinyi02/ClawPanel"
+GITEE_REPO="zxy000006/ClawPanel"
 TAG_PREFIX="lite-v"
-ACCEL_BASE="http://39.102.53.188:16198/clawpanel"
+GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw/main"
+ACCEL_BASE="http://47.76.58.84:16198/clawpanel"
 ACCEL_META_URL="${ACCEL_BASE}/update-lite.json"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
-DEFAULT_VERSION="0.1.4"
+DEFAULT_VERSION="0.1.10"
 
 RED='\033[31m'
 GREEN='\033[32m'
@@ -78,7 +80,7 @@ download_file() {
   local url=$1
   local dest=$2
   if command -v curl >/dev/null 2>&1; then
-    curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 --retry-connrefused -fL "$url" -o "$dest"
+    curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 -fL "$url" -o "$dest"
   else
     wget -T 300 --tries=2 -O "$dest" "$url"
   fi
@@ -160,7 +162,21 @@ download_with_selected_source() {
 
 choose_download_source
 
-VERSION=${VERSION:-$(resolve_latest_version "$DOWNLOAD_SOURCE")}
+LOCAL_PACKAGE_PATH="${LOCAL_PACKAGE:-}"
+
+if [[ -n "$LOCAL_PACKAGE_PATH" ]]; then
+  if [[ ! -f "$LOCAL_PACKAGE_PATH" ]]; then
+    err "指定的本地 Lite 构建包不存在：$LOCAL_PACKAGE_PATH"
+  fi
+  base_name=$(basename "$LOCAL_PACKAGE_PATH")
+  if [[ "$base_name" =~ ^clawpanel-lite-core-v([0-9][0-9A-Za-z._-]*)-linux-amd64\.tar\.gz$ ]]; then
+    VERSION="${BASH_REMATCH[1]}"
+  fi
+else
+  choose_download_source
+  VERSION=${VERSION:-$(resolve_latest_version "$DOWNLOAD_SOURCE")}
+fi
+
 VERSION=${VERSION:-$DEFAULT_VERSION}
 
 PACKAGE_NAME="clawpanel-lite-core-v${VERSION}-linux-amd64.tar.gz"
@@ -184,12 +200,17 @@ mkdir -p "$INSTALL_DIR"
 log "目录已就绪: $INSTALL_DIR"
 
 step 2 $TOTAL_STEPS "下载 ClawPanel Lite v${VERSION}"
-if [[ "$DOWNLOAD_SOURCE" == "github" ]]; then
+if [[ -n "$LOCAL_PACKAGE_PATH" ]]; then
+  cp -f "$LOCAL_PACKAGE_PATH" "$TMP_DIR/$PACKAGE_NAME"
+  DOWNLOAD_SOURCE_ACTUAL="local"
+  info "已使用当前目录中的本地 Lite 构建包进行安装。"
+elif [[ "$DOWNLOAD_SOURCE" == "github" ]]; then
   info "已选择 GitHub（中国香港及境外服务器推荐），失败时自动回退到加速服务器。"
+  download_with_selected_source "$DOWNLOAD_SOURCE" "$PACKAGE_NAME" "$TMP_DIR/$PACKAGE_NAME" || err "GitHub 和加速服务器均下载失败，请检查网络后重试。"
 else
   info "已选择加速服务器（中国大陆服务器推荐），失败时自动回退到 GitHub。"
+  download_with_selected_source "$DOWNLOAD_SOURCE" "$PACKAGE_NAME" "$TMP_DIR/$PACKAGE_NAME" || err "GitHub 和加速服务器均下载失败，请检查网络后重试。"
 fi
-download_with_selected_source "$DOWNLOAD_SOURCE" "$PACKAGE_NAME" "$TMP_DIR/$PACKAGE_NAME" || err "GitHub 和加速服务器均下载失败，请检查网络后重试。"
 log "下载完成 (${DOWNLOAD_SOURCE_ACTUAL})"
 
 step 3 $TOTAL_STEPS "部署 Lite 运行环境"
@@ -198,6 +219,12 @@ rm -rf "$INSTALL_DIR"/*
 tar -xzf "$TMP_DIR/$PACKAGE_NAME" -C "$INSTALL_DIR"
 chown -R root:root "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/$BIN_NAME" "$INSTALL_DIR/bin/clawlite-openclaw"
+if [[ -f "$INSTALL_DIR/runtime/node/bin/node" ]]; then
+  chmod +x "$INSTALL_DIR/runtime/node/bin/node"
+fi
+if [[ -f "$INSTALL_DIR/runtime/node/node" ]]; then
+  chmod +x "$INSTALL_DIR/runtime/node/node"
+fi
 ln -sf "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/clawpanel-lite
 ln -sf "$INSTALL_DIR/bin/clawlite-openclaw" /usr/local/bin/clawlite-openclaw
 log "Lite 文件已部署"
@@ -217,6 +244,7 @@ Restart=always
 RestartSec=5
 Environment=CLAWPANEL_EDITION=lite
 Environment=CLAWPANEL_DATA=${INSTALL_DIR}/data
+Environment=NODE_OPTIONS=--max-old-space-size=2048
 
 [Install]
 WantedBy=multi-user.target

@@ -9,8 +9,9 @@ import (
 type editionConfig struct {
 	Edition           string
 	ServiceName       string
+	ServiceLabel      string
 	BinaryName        string
-	UpdateJSON        string
+	AccelUpdateJSON   string
 	GitHubReleasesAPI string
 	GitHubTagPrefix   string
 }
@@ -20,8 +21,9 @@ func newEditionConfig(edition string) editionConfig {
 		return editionConfig{
 			Edition:           "lite",
 			ServiceName:       "clawpanel-lite",
+			ServiceLabel:      "com.clawpanel.lite.service",
 			BinaryName:        "clawpanel-lite",
-			UpdateJSON:        "http://39.102.53.188:16198/clawpanel/update-lite.json",
+			AccelUpdateJSON:   "http://47.76.58.84:16198/clawpanel/update-lite.json",
 			GitHubReleasesAPI: "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases?per_page=20",
 			GitHubTagPrefix:   "lite-v",
 		}
@@ -29,8 +31,9 @@ func newEditionConfig(edition string) editionConfig {
 	return editionConfig{
 		Edition:           "pro",
 		ServiceName:       "clawpanel",
+		ServiceLabel:      "com.clawpanel.service",
 		BinaryName:        "clawpanel",
-		UpdateJSON:        "http://39.102.53.188:16198/clawpanel/update-pro.json",
+		AccelUpdateJSON:   "http://47.76.58.84:16198/clawpanel/update-pro.json",
 		GitHubReleasesAPI: "https://api.github.com/repos/zhaoxinyi02/ClawPanel/releases?per_page=20",
 		GitHubTagPrefix:   "pro-v",
 	}
@@ -68,10 +71,11 @@ func (c editionConfig) binaryAssetName(version, platformKey string) string {
 }
 
 func (c editionConfig) liteCoreAssetName(version, platformKey string) string {
-	if platformKey != "linux_amd64" {
+	suffix := strings.ReplaceAll(platformKey, "_", "-")
+	if strings.TrimSpace(suffix) == "" {
 		return ""
 	}
-	return fmt.Sprintf("clawpanel-lite-core-v%s-linux-amd64.tar.gz", version)
+	return fmt.Sprintf("clawpanel-lite-core-v%s-%s.tar.gz", version, suffix)
 }
 
 func (c editionConfig) updateAssetName(version, platformKey string) string {
@@ -89,4 +93,11 @@ func (c editionConfig) matchUpdateAsset(version string, releaseAssetName string)
 		}
 	}
 	return "", false
+}
+
+func (c editionConfig) launcherName() string {
+	if runtime.GOOS == "windows" {
+		return "clawlite-openclaw.cmd"
+	}
+	return "clawlite-openclaw"
 }

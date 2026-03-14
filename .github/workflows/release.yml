@@ -196,7 +196,6 @@ jobs:
           Copy-Item -Path "web/dist/*" -Destination "cmd/clawpanel/frontend/dist" -Recurse -Force
 
       - name: Build binary
-        if: needs.prepare.outputs.edition != 'lite' || (matrix.os == 'linux' && matrix.arch == 'amd64')
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
@@ -204,11 +203,86 @@ jobs:
         run: go build -trimpath -ldflags "-s -w -X github.com/zhaoxinyi02/ClawPanel/internal/buildinfo.Version=${{ needs.prepare.outputs.version }} -X github.com/zhaoxinyi02/ClawPanel/internal/buildinfo.Edition=${{ needs.prepare.outputs.edition }}" -o "${{ needs.prepare.outputs.app_name }}-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" ./cmd/clawpanel/
 
       - name: Upload binary artifact
-        if: needs.prepare.outputs.edition != 'lite' || (matrix.os == 'linux' && matrix.arch == 'amd64')
         uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.os }}-${{ matrix.arch }}
           path: ${{ needs.prepare.outputs.app_name }}-v${{ needs.prepare.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          retention-days: 30
+
+  build-lite-packages:
+    name: Build Lite Core Packages
+    if: needs.prepare.outputs.edition == 'lite'
+    needs: [prepare, build-binaries]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+            artifact: binary-linux-amd64
+            binary_name: clawpanel-lite-v${{ needs.prepare.outputs.version }}-linux-amd64
+          - os: darwin
+            arch: amd64
+            runner: macos-15
+            artifact: binary-darwin-amd64
+            binary_name: clawpanel-lite-v${{ needs.prepare.outputs.version }}-darwin-amd64
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+            artifact: binary-darwin-arm64
+            binary_name: clawpanel-lite-v${{ needs.prepare.outputs.version }}-darwin-arm64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Download Lite binary artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+
+      - name: Prepare Lite package inputs
+        shell: bash
+        run: |
+          mkdir -p bin
+          cp "dist/${{ matrix.binary_name }}" "bin/${{ matrix.binary_name }}"
+
+      - name: Collect bundled plugins
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+        run: bash scripts/package-lite-plugins.sh
+
+      - name: Build Lite core package
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          LITE_BINARY: ${{ github.workspace }}/dist/${{ matrix.binary_name }}
+          OPENCLAW_SRC: ""
+        run: bash scripts/package-lite-core.sh ${{ needs.prepare.outputs.version }}
+
+      - name: Upload Lite package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lite-package-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/lite/v${{ needs.prepare.outputs.version }}/*
           retention-days: 30
 
   # Windows 安装包复用前面生成好的 Windows 可执行文件，并在 Windows runner 上原生构建。
@@ -260,14 +334,24 @@ jobs:
   # 汇总所有二进制/安装包，并生成统一 checksums。
   bundle:
     name: Bundle Release Assets
-    needs: [prepare, build-binaries, build-installer]
+    needs: [prepare, build-binaries, build-installer, build-lite-packages]
+    if: ${{ always() && needs.prepare.result == 'success' && needs.build-binaries.result == 'success' && needs.build-installer.result != 'failure' && needs.build-installer.result != 'cancelled' && (needs.prepare.outputs.edition != 'lite' || needs.build-lite-packages.result == 'success') }}
     runs-on: ubuntu-24.04
 
     steps:
       - name: Download binary artifacts
+        if: needs.prepare.outputs.edition != 'lite'
         uses: actions/download-artifact@v8
         with:
           pattern: binary-*
+          path: release
+          merge-multiple: true
+
+      - name: Download Lite package artifacts
+        if: needs.prepare.outputs.edition == 'lite'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: lite-package-*
           path: release
           merge-multiple: true
 
@@ -294,7 +378,7 @@ jobs:
   # 只有真正的 tag 发布才会把资产上传到 GitHub Release 页面。
   publish-release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/pro-v') || startsWith(github.ref, 'refs/tags/lite-v')
+    if: ${{ always() && (startsWith(github.ref, 'refs/tags/pro-v') || startsWith(github.ref, 'refs/tags/lite-v')) && needs.prepare.result == 'success' && needs.bundle.result == 'success' }}
     needs: [prepare, bundle]
     runs-on: ubuntu-24.04
 

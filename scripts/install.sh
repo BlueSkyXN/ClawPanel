@@ -3,9 +3,9 @@
 # ClawPanel 一键安装脚本 (Linux/macOS)
 # 自动获取最新 Release 版本，无需手动更新脚本
 # 用法:
-#   curl -fsSL http://39.102.53.188:16198/clawpanel/scripts/install.sh -o install.sh && sudo bash install.sh
+#   curl -fsSL https://gitee.com/zxy000006/ClawPanel/raw/main/scripts/install.sh -o install.sh && sudo bash install.sh
 # 或:
-#   wget -O install.sh http://39.102.53.188:16198/clawpanel/scripts/install.sh && sudo bash install.sh
+#   wget -O install.sh https://gitee.com/zxy000006/ClawPanel/raw/main/scripts/install.sh && sudo bash install.sh
 # ============================================================
 
 set -e
@@ -14,11 +14,13 @@ INSTALL_DIR="/opt/clawpanel"
 SERVICE_NAME="clawpanel"
 BINARY_NAME="clawpanel"
 REPO="zhaoxinyi02/ClawPanel"
+GITEE_REPO="zxy000006/ClawPanel"
 TAG_PREFIX="pro-v"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
 PORT="19527"
-ACCEL_BASE="http://39.102.53.188:16198/clawpanel"
-DEFAULT_VERSION="5.2.8"
+GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw/main"
+ACCEL_BASE="http://47.76.58.84:16198/clawpanel"
+DEFAULT_VERSION="5.2.10"
 UPDATE_META="${UPDATE_META:-update-pro.json}"
 
 # ==================== 自动获取最新版本 ====================
@@ -248,6 +250,7 @@ main() {
     local SYS_OS=$(detect_os)
     local SYS_ARCH=$(detect_arch)
     local BINARY_FILE="${BINARY_NAME}-v${VERSION}-${SYS_OS}-${SYS_ARCH}"
+    local LOCAL_BINARY_PATH="${LOCAL_BINARY:-}"
     local TOTAL_STEPS=5
     local SERVICE_USER=$(resolve_service_user)
     local SERVICE_GROUP="root"
@@ -267,7 +270,19 @@ main() {
     fi
     echo ""
 
-    choose_download_source
+    if [ -n "$LOCAL_BINARY_PATH" ]; then
+        if [ ! -f "$LOCAL_BINARY_PATH" ]; then
+            err "指定的本地构建包不存在: $LOCAL_BINARY_PATH"
+        fi
+        local base_name
+        base_name=$(basename "$LOCAL_BINARY_PATH")
+        if [[ "$base_name" =~ ^clawpanel-v([0-9][0-9A-Za-z._-]*)-${SYS_OS}-${SYS_ARCH}$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            BINARY_FILE="$base_name"
+        fi
+    else
+        choose_download_source
+    fi
 
     # ---- Step 1: 创建目录 ----
     step 1 $TOTAL_STEPS "创建安装目录..."
@@ -277,12 +292,17 @@ main() {
 
     # ---- Step 2: 下载二进制 ----
     step 2 $TOTAL_STEPS "下载 ClawPanel v${VERSION}..."
-    if [ "$DOWNLOAD_SOURCE" = "github" ]; then
+    if [ -n "$LOCAL_BINARY_PATH" ]; then
+        cp -f "$LOCAL_BINARY_PATH" "${INSTALL_DIR}/${BINARY_NAME}"
+        DOWNLOAD_SOURCE_ACTUAL="local"
+        info "已使用当前目录中的本地构建包进行安装。"
+    elif [ "$DOWNLOAD_SOURCE" = "github" ]; then
         info "已选择 GitHub（中国香港及境外服务器推荐），失败时自动回退到加速服务器。"
+        download_with_selected_source "$DOWNLOAD_SOURCE" "$BINARY_FILE" "${INSTALL_DIR}/${BINARY_NAME}" || err "下载失败！请检查网络连接。"
     else
         info "已选择加速服务器（中国大陆服务器推荐），失败时自动回退到 GitHub。"
+        download_with_selected_source "$DOWNLOAD_SOURCE" "$BINARY_FILE" "${INSTALL_DIR}/${BINARY_NAME}" || err "下载失败！请检查网络连接。"
     fi
-    download_with_selected_source "$DOWNLOAD_SOURCE" "$BINARY_FILE" "${INSTALL_DIR}/${BINARY_NAME}" || err "下载失败！请检查网络连接。"
 
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     if [ "$SERVICE_USER" != "root" ]; then

@@ -18,6 +18,10 @@ do
   fi
 done
 
+if [ -z "$NODE_BIN" ] && [ -d "$RUNTIME_ROOT/node" ]; then
+  NODE_BIN=$(find "$RUNTIME_ROOT/node" -type f -name node -perm -111 2>/dev/null | head -n 1 || true)
+fi
+
 OPENCLAW_APP=""
 for candidate in \
   "$RUNTIME_ROOT/openclaw" \
@@ -47,4 +51,5 @@ export OPENCLAW_STATE_DIR="$DATA_ROOT/openclaw-config"
 export OPENCLAW_CONFIG_PATH="$DATA_ROOT/openclaw-config/openclaw.json"
 export OPENCLAW_WORK="$DATA_ROOT/openclaw-work"
 
+cd "$OPENCLAW_APP"
 exec "$NODE_BIN" "$OPENCLAW_APP/openclaw.mjs" "$@"

@@ -746,6 +746,32 @@ func ensureOpenClawManualPrerequisites() error {
 }
 
 func detectOpenClawVersion(cfg *config.Config) string {
+	if cfg != nil && cfg.IsLiteEdition() {
+		if cfg.OpenClawApp != "" {
+			pkgPath := filepath.Join(cfg.OpenClawApp, "package.json")
+			if v := readVersionFromPackageJSON(pkgPath); v != "" {
+				return v
+			}
+		}
+		if cmd, err := cfg.OpenClawCommand("--version"); err == nil && cmd != nil {
+			cmd.Env = config.BuildExecEnv()
+			if out, err := cmd.Output(); err == nil {
+				if v := strings.TrimPrefix(strings.TrimSpace(string(out)), "v"); v != "" {
+					return v
+				}
+			}
+		}
+		ocConfig, _ := cfg.ReadOpenClawJSON()
+		if ocConfig != nil {
+			if meta, ok := ocConfig["meta"].(map[string]interface{}); ok {
+				if v, ok := meta["lastTouchedVersion"].(string); ok && v != "" {
+					return v
+				}
+			}
+		}
+		return ""
+	}
+
 	// 1. Try reading from cfg.OpenClawApp FIRST (most reliable for SYSTEM service)
 	if cfg.OpenClawApp != "" {
 		pkgPath := filepath.Join(cfg.OpenClawApp, "package.json")

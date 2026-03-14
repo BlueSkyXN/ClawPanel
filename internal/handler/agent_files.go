@@ -266,6 +266,13 @@ func resolveAgentCoreWorkspace(cfg *config.Config, agentID string, create bool) 
 	if workspace == "" {
 		return agentCoreWorkspaceLocation{}, os.ErrNotExist
 	}
+	return resolveAgentCoreWorkspaceFromPath(cfg, workspace, create)
+}
+
+func resolveAgentCoreWorkspaceFromPath(cfg *config.Config, workspace string, create bool) (agentCoreWorkspaceLocation, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return agentCoreWorkspaceLocation{}, os.ErrNotExist
+	}
 	displayWorkspace, root, rel, err := resolveAgentCoreWorkspaceRoots(cfg, workspace)
 	if err != nil {
 		return agentCoreWorkspaceLocation{}, err
@@ -349,7 +356,14 @@ func GetOpenClawAgentCoreFiles(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		workspace, err := resolveAgentCoreWorkspace(cfg, agentID, false)
+		workspacePath := strings.TrimSpace(c.Query("workspace"))
+		var workspace agentCoreWorkspaceLocation
+		var err error
+		if workspacePath != "" {
+			workspace, err = resolveAgentCoreWorkspaceFromPath(cfg, workspacePath, false)
+		} else {
+			workspace, err = resolveAgentCoreWorkspace(cfg, agentID, false)
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "agent workspace 未配置"})
@@ -436,7 +450,14 @@ func SaveOpenClawAgentCoreFile(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		workspace, err := resolveAgentCoreWorkspace(cfg, agentID, true)
+		workspacePath := strings.TrimSpace(c.Query("workspace"))
+		var workspace agentCoreWorkspaceLocation
+		var err error
+		if workspacePath != "" {
+			workspace, err = resolveAgentCoreWorkspaceFromPath(cfg, workspacePath, true)
+		} else {
+			workspace, err = resolveAgentCoreWorkspace(cfg, agentID, true)
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": "agent workspace 未配置"})

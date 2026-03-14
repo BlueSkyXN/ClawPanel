@@ -21,7 +21,7 @@ const (
 	// RegistryURL is the official plugin registry
 	RegistryURL = "https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel-Plugins/main/registry.json"
 	// RegistryMirrorURL is the China mirror
-	RegistryMirrorURL = "http://39.102.53.188:16198/clawpanel/plugins/registry.json"
+	RegistryMirrorURL = "http://47.76.58.84:16198/clawpanel/plugins/registry.json"
 	// RegistryFallbackURLCN is the Gitee fallback when GitHub is unreachable in CN networks
 	RegistryFallbackURLCN = "https://gitee.com/zhaoxinyi02/ClawPanel-Plugins/raw/main/registry.json"
 )
@@ -484,11 +484,20 @@ func (m *Manager) findInstalledPluginDir(pluginID string) (string, bool) {
 }
 
 func (m *Manager) installViaOpenClawCLI(spec string, logf func(string)) error {
-	bin := config.DetectOpenClawBinaryPath()
-	if strings.TrimSpace(bin) == "" {
-		return fmt.Errorf("未找到 openclaw 可执行文件")
+	var cmd *exec.Cmd
+	var err error
+	if m.cfg != nil && m.cfg.IsLiteEdition() {
+		cmd, err = m.cfg.OpenClawCommand("plugins", "install", spec)
+		if err != nil {
+			return err
+		}
+	} else {
+		bin := config.DetectOpenClawBinaryPath()
+		if strings.TrimSpace(bin) == "" {
+			return fmt.Errorf("未找到 openclaw 可执行文件")
+		}
+		cmd = exec.Command(bin, "plugins", "install", spec)
 	}
-	cmd := exec.Command(bin, "plugins", "install", spec)
 	cmd.Env = config.BuildExecEnv()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -586,11 +595,20 @@ func (m *Manager) UninstallWithProgress(pluginID string, cleanupConfig bool, log
 }
 
 func (m *Manager) uninstallViaOpenClawCLI(pluginID string, logf func(string)) error {
-	bin := config.DetectOpenClawBinaryPath()
-	if strings.TrimSpace(bin) == "" {
-		return fmt.Errorf("未找到 openclaw 可执行文件")
+	var cmd *exec.Cmd
+	var err error
+	if m.cfg != nil && m.cfg.IsLiteEdition() {
+		cmd, err = m.cfg.OpenClawCommand("plugins", "uninstall", pluginID)
+		if err != nil {
+			return err
+		}
+	} else {
+		bin := config.DetectOpenClawBinaryPath()
+		if strings.TrimSpace(bin) == "" {
+			return fmt.Errorf("未找到 openclaw 可执行文件")
+		}
+		cmd = exec.Command(bin, "plugins", "uninstall", pluginID)
 	}
-	cmd := exec.Command(bin, "plugins", "uninstall", pluginID)
 	cmd.Env = config.BuildExecEnv()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

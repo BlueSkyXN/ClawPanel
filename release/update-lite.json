@@ -1,9 +1,11 @@
 {
-  "latest_version": "0.1.4",
-  "release_time": "2026-03-11T01:10:00+08:00",
-  "release_note": "## ClawPanel Lite v0.1.4\n\n- Lite 面板内更新改为整包更新，自动同步面板、内置 OpenClaw 与预置插件\n- 安装与更新新增 GitHub / 加速服务器线路选择，并给出地域建议\n- 版本管理页面现在会明确显示当前是 Lite 版还是 Pro 版",
+  "latest_version": "0.1.10",
+  "release_time": "2026-03-13T00:20:00+08:00",
+  "release_note": "## ClawPanel Lite v0.1.10\n\n- 修复 Lite 首次安装后 OpenClaw 不自动启动的根因（openclaw.json 鸡生蛋问题）\n- 放宽 daemon fork 检测超时，解决冷启动 gateway 初始化慢导致离线的问题\n- crash-restart 增加退避上限，避免 gateway 崩溃时无限重启\n- 默认关闭 memory slot，降低 gateway OOM 风险",
   "download_urls": {
-    "linux_amd64": "http://39.102.53.188:16198/clawpanel/releases/clawpanel-lite-core-v0.1.4-linux-amd64.tar.gz"
+    "linux_amd64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-lite-core-v0.1.10-linux-amd64.tar.gz",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.10/clawpanel-lite-core-v0.1.10-darwin-amd64.tar.gz",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.10/clawpanel-lite-core-v0.1.10-darwin-arm64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""

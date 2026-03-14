@@ -53,7 +53,7 @@
     {
       "id": "dingtalk",
       "name": "钉钉通道插件",
-      "version": "2026.3.5",
+      "version": "1.0.6",
       "author": "BytePioneer-AI",
       "description": "钉钉 (DingTalk) 通道插件，通过钉钉 Stream API 接入钉钉群机器人，无需公网地址",
       "homepage": "https://github.com/BytePioneer-AI/openclaw-china",
@@ -78,7 +78,7 @@
       "name": "企业微信（智能机器人）",
       "version": "2026.3.5",
       "author": "BytePioneer-AI",
-      "description": "企业微信 (WeCom/WeChat Work) 通道插件，通过加密回调 Webhook + 被动回复接入企业微信机器人",
+      "description": "企业微信 (WeCom/WeChat Work) 智能机器人通道插件，使用长连接模式，仅需 Bot ID 与 Secret",
       "homepage": "https://github.com/BytePioneer-AI/openclaw-china",
       "repository": "https://github.com/BytePioneer-AI/openclaw-china",
       "license": "MIT",
@@ -90,11 +90,11 @@
       "gitUrl": "",
       "installSubDir": "",
       "downloadUrl": "",
-      "npmPackage": "@openclaw-china/wecom",
+      "npmPackage": "@wecom/wecom-openclaw-plugin",
       "downloads": 0,
       "stars": 0,
       "screenshot": "",
-      "readme": "# 企业微信（智能机器人）\n\n通过企业微信智能机器人模式接入，适合群聊和被动回复。\n\n## 配置\n\n```json\n{\n  \"channels\": {\n    \"wecom\": {\n      \"enabled\": true,\n      \"webhookPath\": \"/wecom\",\n      \"token\": \"YOUR_TOKEN\",\n      \"encodingAESKey\": \"YOUR_43_CHAR_AES_KEY\"\n    }\n  }\n}\n```"
+      "readme": "# 企业微信（智能机器人）\n\n通过企业微信智能机器人长连接模式接入，无需公网回调地址。\n\n## 配置\n\n```json\n{\n  \"channels\": {\n    \"wecom\": {\n      \"enabled\": true,\n      \"botId\": \"YOUR_BOT_ID\",\n      \"secret\": \"YOUR_SECRET\"\n    }\n  }\n}\n```"
     },
     {
       "id": "wecom-app",

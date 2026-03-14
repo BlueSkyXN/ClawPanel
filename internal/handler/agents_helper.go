@@ -211,7 +211,7 @@ func resolveAgentConfigDir(cfg *config.Config, agentID string) string {
 	}
 	ocConfig, _ := cfg.ReadOpenClawJSON()
 	if item := findAgentConfig(ocConfig, agentID); item != nil {
-		if agentDir := normalizeAgentPath(cfg.OpenClawDir, toString(item["agentDir"])); agentDir != "" {
+		if agentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["agentDir"])); err == nil && agentDir != "" {
 			return normalizeAgentConfigDir(agentDir)
 		}
 	}
@@ -261,7 +261,7 @@ func resolveAgentRootDir(cfg *config.Config, agentID string) string {
 	}
 	ocConfig, _ := cfg.ReadOpenClawJSON()
 	if item := findAgentConfig(ocConfig, agentID); item != nil {
-		if agentDir := normalizeAgentPath(cfg.OpenClawDir, toString(item["agentDir"])); agentDir != "" {
+		if agentDir, err := normalizeAgentPathWithinBase(cfg.OpenClawDir, toString(item["agentDir"])); err == nil && agentDir != "" {
 			// Upstream OpenClaw may return either the bundle root (agents/<id>)
 			// or the nested config dir (agents/<id>/agent). Session/auth stores live
 			// beside the config dir, so normalize the nested form back to its bundle root.
