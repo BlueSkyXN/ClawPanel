@@ -10,7 +10,7 @@ GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw/main"
 ACCEL_BASE="http://47.76.58.84:16198/clawpanel"
 ACCEL_META_URL="${ACCEL_BASE}/update-lite.json"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
-DEFAULT_VERSION="0.1.10"
+DEFAULT_VERSION="0.1.11"
 
 RED='\033[31m'
 GREEN='\033[32m'

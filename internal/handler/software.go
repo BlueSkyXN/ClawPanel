@@ -254,7 +254,6 @@ func restartOpenClawGateway(cfg *config.Config, procMgr *process.Manager) error 
 	if procMgr != nil {
 		return procMgr.Restart()
 	}
-	writeRestartSignal(cfg, "qq channel setup")
 	return nil
 }
 

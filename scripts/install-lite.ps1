@@ -9,7 +9,7 @@ $GiteeMeta = "$GiteeRawBase/release/update-lite.json"
 $GiteeReleaseBase = "https://gitee.com/$GiteeRepo/releases/download"
 $InstallDir = "C:\ClawPanelLite"
 $ServiceName = "clawpanel-lite"
-$DefaultVersion = "0.1.10"
+$DefaultVersion = "0.1.11"
 
 function Get-LatestVersionFromGitHub {
   $items = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=20" -UseBasicParsing

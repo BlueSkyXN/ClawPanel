@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=${1:-${VERSION:-0.1.10}}
+VERSION=${1:-${VERSION:-0.1.11}}
 TARGET_OS=${TARGET_OS:-linux}
 TARGET_ARCH=${TARGET_ARCH:-amd64}
 NODE_VERSION=${NODE_VERSION:-22.22.1}
@@ -45,7 +45,21 @@ prune_node_runtime() {
 
 prune_openclaw_runtime() {
   local root="$1"
-  rm -rf "$root/docs"
+  # 保留 docs/reference/templates（包含 AGENTS.md 等 agent 必需模板），删除其余文档目录
+  if [[ -d "$root/docs" ]]; then
+    find "$root/docs" -mindepth 1 -maxdepth 1 -type d | while read -r d; do
+      [[ "$(basename "$d")" == "reference" ]] && continue
+      rm -rf "$d"
+    done
+    find "$root/docs" -mindepth 1 -maxdepth 1 -type f -delete
+    # 如果 reference 下有非 templates 的内容也删掉
+    if [[ -d "$root/docs/reference" ]]; then
+      find "$root/docs/reference" -mindepth 1 -maxdepth 1 | while read -r d; do
+        [[ "$(basename "$d")" == "templates" ]] && continue
+        rm -rf "$d"
+      done
+    fi
+  fi
   rm -f "$root/README.md" "$root/CHANGELOG.md" "$root/LICENSE"
 }
 
