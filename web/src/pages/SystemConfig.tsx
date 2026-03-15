@@ -956,13 +956,29 @@ export default function SystemConfig() {
                                   { key: 'requiresMistralToolIds', label: 'Requires Mistral Tool IDs' },
                                 ].map(flag => {
                                   const compat = mObj.compat || {};
-                                  const val = (compat as any)[flag.key];
+                                  const val = (compat as any)[flag.key]; // undefined=default, true, false
+                                  // Tri-state: gray(default/unset) → green(true) → red(false) → gray
+                                  const cycleCompat = () => {
+                                    const c = { ...(mObj.compat || {}) };
+                                    if (val === undefined || val === null) {
+                                      (c as any)[flag.key] = true;
+                                    } else if (val === true) {
+                                      (c as any)[flag.key] = false;
+                                    } else {
+                                      delete (c as any)[flag.key];
+                                    }
+                                    const hasKeys = Object.keys(c).some(k => (c as any)[k] !== undefined);
+                                    updateModel('compat', hasKeys ? c : undefined);
+                                  };
+                                  const colorClass = val === true
+                                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-300'
+                                    : val === false
+                                    ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50 text-red-700 dark:text-red-300'
+                                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400';
+                                  const dotClass = val === true ? 'bg-emerald-500' : val === false ? 'bg-red-500' : 'bg-gray-300';
                                   return (
-                                    <button key={flag.key} onClick={() => {
-                                      const c = { ...(mObj.compat || {}), [flag.key]: !val };
-                                      updateModel('compat', c);
-                                    }} className={`px-2.5 py-1.5 text-[11px] rounded-lg border transition-colors text-left flex items-center gap-1.5 ${val ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-300' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400'}`}>
-                                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${val ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                                    <button key={flag.key} onClick={cycleCompat} className={`px-2.5 py-1.5 text-[11px] rounded-lg border transition-colors text-left flex items-center gap-1.5 ${colorClass}`}>
+                                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
                                       {flag.label}
                                     </button>
                                   );
