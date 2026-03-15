@@ -247,8 +247,11 @@ function LayoutShell({ onLogout, napcatStatus, wechatStatus, openclawStatus, pro
       }
     }
 
-    return channels;
+    // Sort: connected channels first, then alphabetical; limit to 5
+    channels.sort((a, b) => (a.connected === b.connected ? a.label.localeCompare(b.label) : a.connected ? -1 : 1));
+    return channels.slice(0, 5);
   }, [locale, napcatStatus, openclawStatus, t, wechatStatus]);
+  const totalEnabledChannels = (openclawStatus?.enabledChannels || []).length;
   const runtime = useMemo(() => resolveOpenClawRuntime(openclawStatus, processStatus), [openclawStatus, processStatus]);
   const openClawRestartHint = processStatus?.managedExternally
     ? (locale === 'zh-CN' ? '当前 OpenClaw 由外部进程管理，请改用“网关”按钮或在外部环境中重启。' : 'OpenClaw is managed externally. Use “Gateway” or restart it outside the panel.')
@@ -290,6 +293,9 @@ function LayoutShell({ onLogout, napcatStatus, wechatStatus, openclawStatus, pro
                 </div>
               </div>
             ))}
+            {totalEnabledChannels > 5 && (
+              <div className="text-[10px] text-slate-400 pl-4">+{totalEnabledChannels - 5} {locale === 'zh-CN' ? '个通道' : 'more'}</div>
+            )}
           </div>
         )}
 

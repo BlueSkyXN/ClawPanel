@@ -233,6 +233,7 @@ export default function SystemConfig() {
   const [originConfig, setOriginConfig] = useState<any>({});
   const [diffItems, setDiffItems] = useState<ConfigDiffItem[]>([]);
   const [showDiffPreview, setShowDiffPreview] = useState(false);
+  const [expandedModel, setExpandedModel] = useState<string | null>(null);
 
   useEffect(() => { loadConfig(); }, []);
   useEffect(() => {
@@ -772,6 +773,40 @@ export default function SystemConfig() {
                       <input value={prov._note || ''} onChange={e => setVal(`models.providers.${pid}._note`, e.target.value)}
                         placeholder="例: 公司账号 / 个人测试" className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
                     </div>
+                    <div className="col-span-2">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">自定义请求头 (Custom Headers)</label>
+                      <div className="space-y-2">
+                        {Object.entries(prov.headers || {}).map(([hk, hv]) => (
+                          <div key={hk} className="flex gap-2 items-center">
+                            <input value={hk} readOnly className="w-1/3 px-2.5 py-1.5 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400" />
+                            <input value={String(hv)} onChange={e => {
+                              updateConfig((clone: any) => {
+                                if (!clone.models.providers[pid].headers) clone.models.providers[pid].headers = {};
+                                clone.models.providers[pid].headers[hk] = e.target.value;
+                              });
+                            }} className="flex-1 px-2.5 py-1.5 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                            <button onClick={() => {
+                              updateConfig((clone: any) => {
+                                if (clone.models.providers[pid].headers) {
+                                  delete clone.models.providers[pid].headers[hk];
+                                  if (Object.keys(clone.models.providers[pid].headers).length === 0) delete clone.models.providers[pid].headers;
+                                }
+                              });
+                            }} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><Trash2 size={14} /></button>
+                          </div>
+                        ))}
+                        <button onClick={() => {
+                          const key = prompt('Header name (e.g. X-Custom-Header):');
+                          if (!key?.trim()) return;
+                          updateConfig((clone: any) => {
+                            if (!clone.models.providers[pid].headers) clone.models.providers[pid].headers = {};
+                            clone.models.providers[pid].headers[key.trim()] = '';
+                          });
+                        }} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 border-dashed hover:border-solid transition-all flex items-center gap-1.5">
+                          <Plus size={12} /> 添加请求头
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <ProviderHealthCheck pid={pid} prov={prov} />
 
@@ -789,40 +824,184 @@ export default function SystemConfig() {
                             clone.models.providers[pid].models = models;
                           });
                         };
+                        const modelKey = `${pid}-${idx}`;
+                        const isExpanded = expandedModel === modelKey;
                         return (
-                        <div key={idx} className="p-3 rounded-xl bg-[linear-gradient(145deg,rgba(255,255,255,0.76),rgba(239,246,255,0.56))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.8),rgba(30,64,175,0.08))] border border-blue-100/70 dark:border-blue-800/20 space-y-3 group hover:border-blue-200 dark:hover:border-blue-800/40 transition-colors backdrop-blur-xl">
-                          <div className="flex items-center gap-3">
-                            <div className="p-1.5 rounded-xl bg-white/80 dark:bg-slate-800/70 shadow-sm text-blue-500 border border-blue-100/60 dark:border-slate-700/60">
-                              <Box size={14} />
-                            </div>
+                        <div key={idx} className="space-y-0">
+                          {/* Tier 1: Compact row */}
+                          <div className="flex items-center gap-2 py-2 px-3 rounded-lg bg-white/60 dark:bg-slate-800/60 border border-gray-100 dark:border-gray-700/50 group hover:border-blue-200 dark:hover:border-blue-700/50 transition-colors">
+                            <Box size={12} className="text-blue-500 shrink-0" />
                             <input value={mObj.id || ''} onChange={e => updateModel('id', e.target.value)}
-                              placeholder="模型 ID" className="flex-1 px-2 py-1 text-sm font-mono font-medium bg-transparent border-b border-transparent focus:border-blue-500 outline-none transition-colors" />
+                              placeholder="model-id" className="flex-1 text-sm font-mono bg-transparent border-none outline-none min-w-0 text-gray-900 dark:text-white placeholder-gray-400" />
+                            <span className="text-[10px] text-gray-400 shrink-0 font-mono" title="Context Window">{mObj.contextWindow ? `${Math.round(mObj.contextWindow / 1000)}k` : '-'}</span>
+                            <span className="text-[10px] text-gray-400 shrink-0 font-mono" title="Max Tokens">{mObj.maxTokens ? `${Math.round(mObj.maxTokens / 1000)}k` : '-'}</span>
+                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${mObj.reasoning ? 'bg-blue-500' : 'bg-gray-300'}`} title={mObj.reasoning ? 'Reasoning: ON' : 'Reasoning: OFF'} />
+                            <button onClick={() => setExpandedModel(isExpanded ? null : modelKey)} className="p-1 text-gray-400 hover:text-blue-500 transition-colors" title="Advanced config">
+                              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            </button>
                             <button onClick={() => {
                               updateConfig((clone: any) => {
                                 clone.models.providers[pid].models.splice(idx, 1);
                               });
-                            }} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>
+                            }} className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all" title="Delete model"><Trash2 size={14} /></button>
                           </div>
-                          <div className="grid grid-cols-3 gap-3 pl-9">
-                            <div>
-                              <label className="text-[10px] text-gray-400 font-medium block mb-1">Context Window</label>
-                              <input type="number" value={mObj.contextWindow ?? ''} onChange={e => updateModel('contextWindow', e.target.value ? Number(e.target.value) : undefined)}
-                                placeholder="128k" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 font-mono focus:border-blue-500 outline-none" />
+                          {/* Tier 2: Advanced panel */}
+                          {isExpanded && (
+                          <div className="ml-6 mt-2 p-4 rounded-xl bg-gray-50/80 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 space-y-4 animate-in fade-in slide-in-from-top-2 duration-150">
+                            {/* Basic fields */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              <div>
+                                <label className="text-[10px] text-gray-400 font-medium block mb-1">Context Window</label>
+                                <input type="number" value={mObj.contextWindow ?? ''} onChange={e => updateModel('contextWindow', e.target.value ? Number(e.target.value) : undefined)}
+                                  placeholder="128000" className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-400 font-medium block mb-1">Max Tokens</label>
+                                <input type="number" value={mObj.maxTokens ?? ''} onChange={e => updateModel('maxTokens', e.target.value ? Number(e.target.value) : undefined)}
+                                  placeholder="8192" className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-400 font-medium block mb-1">推理模型 (Reasoning)</label>
+                                <button onClick={() => updateModel('reasoning', !mObj.reasoning)}
+                                  className={`w-full px-2 py-1.5 text-xs rounded-lg border transition-colors text-left flex items-center gap-1.5 ${mObj.reasoning ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500'}`}>
+                                  <div className={`w-2 h-2 rounded-full ${mObj.reasoning ? 'bg-blue-500' : 'bg-gray-300'}`} />
+                                  {mObj.reasoning ? '是' : '否'}
+                                </button>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-gray-400 font-medium block mb-1">输入模态 (Input)</label>
+                                <div className="flex gap-2">
+                                  {['text', 'image'].map(mod => {
+                                    const inputs: string[] = mObj.input || ['text'];
+                                    const checked = inputs.includes(mod);
+                                    return (
+                                      <label key={mod} className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+                                        <input type="checkbox" checked={checked} onChange={() => {
+                                          const current: string[] = mObj.input || ['text'];
+                                          const next = checked ? current.filter((i: string) => i !== mod) : [...current, mod];
+                                          updateModel('input', next.length > 0 ? next : ['text']);
+                                        }} className="rounded border-gray-300 text-blue-500 focus:ring-blue-500/30 w-3 h-3" />
+                                        {mod}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
                             </div>
+
+                            {/* Cost section */}
                             <div>
-                              <label className="text-[10px] text-gray-400 font-medium block mb-1">Max Tokens</label>
-                              <input type="number" value={mObj.maxTokens ?? ''} onChange={e => updateModel('maxTokens', e.target.value ? Number(e.target.value) : undefined)}
-                                placeholder="8k" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 font-mono focus:border-blue-500 outline-none" />
+                              <label className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider block mb-2">费用 (Cost) — $/1M tokens</label>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                {[
+                                  { key: 'input', label: 'Input' },
+                                  { key: 'output', label: 'Output' },
+                                  { key: 'cacheRead', label: 'Cache Read' },
+                                  { key: 'cacheWrite', label: 'Cache Write' },
+                                ].map(cf => (
+                                  <div key={cf.key}>
+                                    <label className="text-[10px] text-gray-400 font-medium block mb-1">{cf.label}</label>
+                                    <input type="number" step="0.01" min="0" value={(mObj.cost as any)?.[cf.key] ?? ''} onChange={e => {
+                                      const cost = { ...(mObj.cost || {}), [cf.key]: e.target.value ? Number(e.target.value) : undefined };
+                                      updateModel('cost', cost);
+                                    }} placeholder="0.00" className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+                                  </div>
+                                ))}
+                              </div>
                             </div>
+
+                            {/* Model-level headers */}
                             <div>
-                              <label className="text-[10px] text-gray-400 font-medium block mb-1">推理模型</label>
-                              <button onClick={() => updateModel('reasoning', !mObj.reasoning)}
-                                className={`w-full px-2 py-1 text-xs rounded border transition-colors text-left flex items-center gap-1.5 ${mObj.reasoning ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500'}`}>
-                                <div className={`w-2 h-2 rounded-full ${mObj.reasoning ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
-                                {mObj.reasoning ? '是' : '否'}
-                              </button>
+                              <label className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider block mb-2">模型请求头 (Model Headers)</label>
+                              <div className="space-y-2">
+                                {Object.entries(mObj.headers || {}).map(([hk, hv]) => (
+                                  <div key={hk} className="flex gap-2 items-center">
+                                    <input value={hk} readOnly className="w-1/3 px-2 py-1.5 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400" />
+                                    <input value={String(hv)} onChange={e => {
+                                      const headers = { ...(mObj.headers || {}), [hk]: e.target.value };
+                                      updateModel('headers', headers);
+                                    }} className="flex-1 px-2 py-1.5 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                                    <button onClick={() => {
+                                      const headers = { ...(mObj.headers || {}) };
+                                      delete headers[hk];
+                                      updateModel('headers', Object.keys(headers).length > 0 ? headers : undefined);
+                                    }} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><Trash2 size={14} /></button>
+                                  </div>
+                                ))}
+                                <button onClick={() => {
+                                  const key = prompt('Header name:');
+                                  if (!key?.trim()) return;
+                                  const headers = { ...(mObj.headers || {}), [key.trim()]: '' };
+                                  updateModel('headers', headers);
+                                }} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 border-dashed hover:border-solid transition-all flex items-center gap-1.5">
+                                  <Plus size={12} /> 添加请求头
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Compatibility flags */}
+                            <div>
+                              <label className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider block mb-2">兼容性 (Compatibility)</label>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                {[
+                                  { key: 'supportsDeveloperRole', label: 'Developer Role' },
+                                  { key: 'supportsReasoningEffort', label: 'Reasoning Effort' },
+                                  { key: 'supportsTools', label: 'Tools' },
+                                  { key: 'supportsStrictMode', label: 'Strict Mode' },
+                                  { key: 'supportsStore', label: 'Store' },
+                                  { key: 'supportsUsageInStreaming', label: 'Usage in Streaming' },
+                                  { key: 'requiresToolResultName', label: 'Requires Tool Result Name' },
+                                  { key: 'requiresAssistantAfterToolResult', label: 'Requires Asst After Tool' },
+                                  { key: 'requiresThinkingAsText', label: 'Requires Thinking as Text' },
+                                  { key: 'requiresMistralToolIds', label: 'Requires Mistral Tool IDs' },
+                                ].map(flag => {
+                                  const compat = mObj.compat || {};
+                                  const val = (compat as any)[flag.key];
+                                  return (
+                                    <button key={flag.key} onClick={() => {
+                                      const c = { ...(mObj.compat || {}), [flag.key]: !val };
+                                      updateModel('compat', c);
+                                    }} className={`px-2.5 py-1.5 text-[11px] rounded-lg border transition-colors text-left flex items-center gap-1.5 ${val ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-300' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400'}`}>
+                                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${val ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                                      {flag.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 mt-3">
+                                <div>
+                                  <label className="text-[10px] text-gray-400 font-medium block mb-1">maxTokensField</label>
+                                  <div className="relative">
+                                    <select value={(mObj.compat as any)?.maxTokensField || ''} onChange={e => {
+                                      const c = { ...(mObj.compat || {}), maxTokensField: e.target.value || undefined };
+                                      updateModel('compat', c);
+                                    }} className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 appearance-none cursor-pointer">
+                                      <option value="">默认 (auto)</option>
+                                      <option value="max_completion_tokens">max_completion_tokens</option>
+                                      <option value="max_tokens">max_tokens</option>
+                                    </select>
+                                    <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-400 font-medium block mb-1">thinkingFormat</label>
+                                  <div className="relative">
+                                    <select value={(mObj.compat as any)?.thinkingFormat || ''} onChange={e => {
+                                      const c = { ...(mObj.compat || {}), thinkingFormat: e.target.value || undefined };
+                                      updateModel('compat', c);
+                                    }} className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 appearance-none cursor-pointer">
+                                      <option value="">默认 (auto)</option>
+                                      <option value="openai">openai</option>
+                                      <option value="zai">zai</option>
+                                      <option value="qwen">qwen</option>
+                                    </select>
+                                    <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           </div>
+                          )}
                         </div>
                         );
                       })}
