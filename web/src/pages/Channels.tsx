@@ -1094,6 +1094,8 @@ export default function Channels() {
     setSearchParams(next, { replace: true });
   };
 
+  const WECOM_MUTEX: Record<string, string> = { 'wecom': 'wecom-app', 'wecom-app': 'wecom' };
+
   const handleToggleEnabled = async (channelId: string) => {
     const newEnabled = !isChannelEnabled(channelId);
     if (newEnabled) {
@@ -1105,6 +1107,12 @@ export default function Channels() {
       }
     }
     try {
+      // 企微互斥：开启其中一个时自动关闭另一个
+      const mutexId = WECOM_MUTEX[channelId];
+      if (newEnabled && mutexId && isChannelEnabled(mutexId)) {
+        await api.toggleChannel(mutexId, false);
+        await api.updatePlugin('wecom', { enabled: false });
+      }
       const r = await api.toggleChannel(channelId, newEnabled);
       if (r.ok) {
         setMsg(r.message || (newEnabled ? t.channels.channelEnabled : t.channels.channelDisabled));
@@ -1133,6 +1141,12 @@ export default function Channels() {
       }
       const r = await api.updateChannel(currentDef.id, chData);
       if (!r.ok) throw new Error(r.error || t.channels.saveFailed);
+      // 企微互斥：保存并启用时自动关闭另一个
+      const mutexId = WECOM_MUTEX[currentDef.id];
+      if (enabledState && mutexId && isChannelEnabled(mutexId)) {
+        await api.toggleChannel(mutexId, false);
+        await api.updatePlugin('wecom', { enabled: false });
+      }
       // 飞书特殊处理：保存时操作当前活跃变体的 plugin entry
       if (currentDef.id === 'feishu') {
         const entryId = getFeishuPluginEntryId(ocConfig);
@@ -2452,6 +2466,12 @@ export default function Channels() {
                   <div className="font-semibold text-amber-900 dark:text-amber-100">飞书当前处于配对模式</div>
                   <div>首次私聊机器人时，OpenClaw 会返回 pairing code。Lite 版保存有凭证时会优先写成免配对模式；如果你看到这里，重新保存一次配置通常就会改成免配对。</div>
                   <div>若仍需手动审批，可在服务器执行 <span className="font-mono">clawlite-openclaw pairing list feishu</span> 查看待审批请求，再执行 <span className="font-mono">clawlite-openclaw pairing approve feishu &lt;code&gt;</span> 完成授权。</div>
+                </div>
+              )}
+
+              {(currentDef.id === 'wecom' || currentDef.id === 'wecom-app') && (
+                <div className="rounded-lg border border-blue-200 dark:border-blue-800/40 bg-blue-50/80 dark:bg-blue-900/10 px-4 py-3 text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+                  <span className="font-semibold">企业微信两种模式互斥：</span>智能机器人与自建应用共用同一 channel，启用其中一个会自动关闭另一个。
                 </div>
               )}
 

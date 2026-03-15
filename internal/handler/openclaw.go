@@ -1076,13 +1076,6 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 		if channels == nil {
 			channels = map[string]interface{}{}
 		}
-		ch, _ := channels[req.ChannelID].(map[string]interface{})
-		if ch == nil {
-			ch = map[string]interface{}{}
-		}
-		ch["enabled"] = req.Enabled
-		channels[req.ChannelID] = ch
-		ocConfig["channels"] = channels
 
 		// 更新 plugins.entries
 		plugins, _ := ocConfig["plugins"].(map[string]interface{})
@@ -1094,38 +1087,109 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 			entries = map[string]interface{}{}
 		}
 
-		// 飞书特殊处理：确定当前活跃的 plugin entry ID，启用/禁用正确的条目
-		if req.ChannelID == "feishu" {
-			activeEntryID := resolveActiveFeishuEntryID(entries)
-			pe, _ := entries[activeEntryID].(map[string]interface{})
-			if pe == nil {
-				pe = map[string]interface{}{}
+		// 企微互斥：开启其中一个时自动关闭另一个
+		wecomMutex := map[string]string{"wecom": "wecom-app", "wecom-app": "wecom"}
+		if req.Enabled {
+			if mutexID, ok := wecomMutex[req.ChannelID]; ok {
+				// 关闭另一个 channel
+				if other, ok2 := channels[mutexID].(map[string]interface{}); ok2 {
+					other["enabled"] = false
+					channels[mutexID] = other
+				}
+				// 关闭另一个 plugin entry（两个都映射到 wecom entry）
+				if pe, ok2 := entries["wecom"].(map[string]interface{}); ok2 {
+					pe["enabled"] = false
+					entries["wecom"] = pe
+				}
+				// 关闭 channels.wecom 的 enabled（另一个方向时）
+				if mutexID == "wecom" {
+					if wch, ok2 := channels["wecom"].(map[string]interface{}); ok2 {
+						wch["enabled"] = false
+						channels["wecom"] = wch
+					}
+				}
 			}
-			pe["enabled"] = req.Enabled
-			entries[activeEntryID] = pe
-			// 禁用另一个变体（如果存在）
-			otherID := "feishu"
-			if activeEntryID == "feishu" {
-				otherID = "feishu-openclaw-plugin"
-			}
-			if otherEntry, ok := entries[otherID].(map[string]interface{}); ok {
-				otherEntry["enabled"] = false
-				entries[otherID] = otherEntry
-			}
-		} else {
-			pe, _ := entries[req.ChannelID].(map[string]interface{})
-			if pe == nil {
-				pe = map[string]interface{}{}
-			}
-			pe["enabled"] = req.Enabled
-			entries[req.ChannelID] = pe
 		}
+
+		// wecom-app 是虚拟通道，实际写到 channels.wecom（兼容 @sunnoy/wecom 插件读取 channels.wecom 配置）
+		if req.ChannelID == "wecom-app" {
+			wecom, _ := channels["wecom"].(map[string]interface{})
+			if wecom == nil {
+				wecom = map[string]interface{}{}
+			}
+			wecom["enabled"] = req.Enabled
+			channels["wecom"] = wecom
+			// plugin entry 也用 wecom
+			pe, _ := entries["wecom"].(map[string]interface{})
+			if pe == nil {
+				pe = map[string]interface{}{}
+			}
+			pe["enabled"] = req.Enabled
+			entries["wecom"] = pe
+		} else {
+			ch, _ := channels[req.ChannelID].(map[string]interface{})
+			if ch == nil {
+				ch = map[string]interface{}{}
+			}
+			ch["enabled"] = req.Enabled
+			channels[req.ChannelID] = ch
+
+			// 飞书特殊处理：确定当前活跃的 plugin entry ID，启用/禁用正确的条目
+			if req.ChannelID == "feishu" {
+				activeEntryID := resolveActiveFeishuEntryID(entries)
+				pe, _ := entries[activeEntryID].(map[string]interface{})
+				if pe == nil {
+					pe = map[string]interface{}{}
+				}
+				pe["enabled"] = req.Enabled
+				entries[activeEntryID] = pe
+				// 禁用另一个变体（如果存在）
+				otherID := "feishu"
+				if activeEntryID == "feishu" {
+					otherID = "feishu-openclaw-plugin"
+				}
+				if otherEntry, ok := entries[otherID].(map[string]interface{}); ok {
+					otherEntry["enabled"] = false
+					entries[otherID] = otherEntry
+				}
+			} else {
+				pe, _ := entries[req.ChannelID].(map[string]interface{})
+				if pe == nil {
+					pe = map[string]interface{}{}
+				}
+				pe["enabled"] = req.Enabled
+				entries[req.ChannelID] = pe
+			}
+		}
+		ocConfig["channels"] = channels
 		plugins["entries"] = entries
 		ocConfig["plugins"] = plugins
 
 		if err := cfg.WriteOpenClawJSON(ocConfig); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
+		}
+
+		// 企微插件目录弹出式切换：wecom-app 开启时把插件移入 extensions，wecom 开启时移出
+		if cfg.OpenClawDir != "" {
+			extDir := filepath.Join(cfg.OpenClawDir, "extensions")
+			activeDir := filepath.Join(extDir, "wecom-app")
+			stashDir := filepath.Join(filepath.Dir(cfg.OpenClawDir), "wecom-app-plugin")
+			if req.ChannelID == "wecom-app" && req.Enabled {
+				// 移入：把 stash 目录 rename 到 extensions/wecom-app
+				if _, err2 := os.Stat(stashDir); err2 == nil {
+					if _, err3 := os.Stat(activeDir); err3 != nil {
+						_ = os.Rename(stashDir, activeDir)
+					}
+				}
+			} else if (req.ChannelID == "wecom" || req.ChannelID == "wecom-app") && !req.Enabled || (req.ChannelID == "wecom" && req.Enabled) {
+				// 移出：把 extensions/wecom-app rename 到 stash
+				if _, err2 := os.Stat(activeDir); err2 == nil {
+					if _, err3 := os.Stat(stashDir); err3 != nil {
+						_ = os.Rename(activeDir, stashDir)
+					}
+				}
+			}
 		}
 
 		// 如果是 QQ 通道，关闭时停止 NapCat 并暂停监控；开启时恢复监控
