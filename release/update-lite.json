@@ -1,11 +1,11 @@
 {
-  "latest_version": "0.1.12",
-  "release_time": "2026-03-14T13:50:14+08:00",
-  "release_note": "## ClawPanel Lite v0.1.12\n\n- 新增编排监控台与技能市场\n- 技能管理增强与 CRON 定时任务重构\n- 更新安装/更新元数据，恢复一键安装与手动更新获取最新版本",
+  "latest_version": "0.1.13",
+  "release_time": "2026-03-18T01:20:00+08:00",
+  "release_note": "## ClawPanel Lite v0.1.13\n\n- 自定义技能 skill.json 配置正式接入面板 UI，可直接编辑与保存\n- 已安装技能支持复制到其他智能体或全局目录\n- 合入飞书多 ID、前端性能优化与模型高级配置 UI",
   "download_urls": {
-    "linux_amd64": "http://47.76.58.84:16198/clawpanel/releases/clawpanel-lite-core-v0.1.12-linux-amd64.tar.gz",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.12/clawpanel-lite-core-v0.1.12-darwin-amd64.tar.gz",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.12/clawpanel-lite-core-v0.1.12-darwin-arm64.tar.gz"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.13/clawpanel-lite-core-v0.1.13-linux-amd64.tar.gz",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.13/clawpanel-lite-core-v0.1.13-darwin-amd64.tar.gz",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.1.13/clawpanel-lite-core-v0.1.13-darwin-arm64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""
