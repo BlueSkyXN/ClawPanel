@@ -17,16 +17,33 @@ import (
 )
 
 type skillInfo struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Version     string                 `json:"version,omitempty"`
-	Enabled     bool                   `json:"enabled"`
-	Path        string                 `json:"path"`
-	SkillKey    string                 `json:"skillKey,omitempty"`
-	Source      string                 `json:"source,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Requires    map[string]interface{} `json:"requires,omitempty"`
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	Version      string                 `json:"version,omitempty"`
+	Enabled      bool                   `json:"enabled"`
+	Path         string                 `json:"path"`
+	SkillKey     string                 `json:"skillKey,omitempty"`
+	Source       string                 `json:"source,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	Requires     map[string]interface{} `json:"requires,omitempty"`
+	ConfigSchema []skillConfigField     `json:"configSchema,omitempty"`
+}
+
+type skillConfigField struct {
+	Key          string              `json:"key"`
+	Label        string              `json:"label,omitempty"`
+	Type         string              `json:"type,omitempty"`
+	Placeholder  string              `json:"placeholder,omitempty"`
+	Help         string              `json:"help,omitempty"`
+	Required     bool                `json:"required,omitempty"`
+	Options      []skillConfigOption `json:"options,omitempty"`
+	DefaultValue interface{}         `json:"defaultValue,omitempty"`
+}
+
+type skillConfigOption struct {
+	Label string      `json:"label,omitempty"`
+	Value interface{} `json:"value"`
 }
 
 type pluginInfo struct {
@@ -905,6 +922,11 @@ func parseSkillInfo(skillPath, source string, skillEntries map[string]interface{
 		_ = json.Unmarshal(packageBytes, &pkg)
 	}
 
+	manifest := map[string]interface{}{}
+	if manifestBytes, err := os.ReadFile(filepath.Join(skillPath, "skill.json")); err == nil && len(manifestBytes) <= maxSkillFileSize {
+		_ = json.Unmarshal(manifestBytes, &manifest)
+	}
+
 	openClawMeta := resolveOpenClawMetadata(frontmatter)
 	skillKey := trimmedString(openClawMeta["skillKey"], id)
 	if skillKey == "" {
@@ -922,7 +944,12 @@ func parseSkillInfo(skillPath, source string, skillEntries map[string]interface{
 	if anyBins := asStringSlice(requiresMap["anyBins"]); len(anyBins) > 0 {
 		requires["anyBins"] = anyBins
 	}
-	if configKeys := asStringSlice(requiresMap["config"]); len(configKeys) > 0 {
+	configSchema := normalizeSkillConfigSchema(manifest["config"])
+	configKeys := asStringSlice(requiresMap["config"])
+	if len(configSchema) > 0 {
+		configKeys = uniqueStrings(append(configKeys, skillConfigKeys(configSchema)...))
+	}
+	if len(configKeys) > 0 {
 		requires["config"] = configKeys
 	}
 
@@ -930,17 +957,21 @@ func parseSkillInfo(skillPath, source string, skillEntries map[string]interface{
 	if len(openClawMeta) > 0 {
 		metadata["openclaw"] = openClawMeta
 	}
+	if manifestMeta := compactSkillManifestMetadata(manifest); len(manifestMeta) > 0 {
+		metadata["skill"] = manifestMeta
+	}
 
 	enabled := resolveSkillEnabled(skillEntries, legacyBlocklist, skillKey, id)
 	skill := skillInfo{
-		ID:          id,
-		Name:        trimmedString(frontmatter["name"], trimmedString(pkg["name"], id)),
-		Description: resolveSkillDescription(frontmatter, pkg, body),
-		Version:     resolveLocalSkillVersion(pkg, skillPath),
-		Enabled:     enabled,
-		Path:        skillPath,
-		SkillKey:    skillKey,
-		Source:      source,
+		ID:           id,
+		Name:         resolveSkillName(frontmatter, manifest, pkg, id),
+		Description:  resolveSkillDescription(frontmatter, manifest, pkg, body),
+		Version:      resolveLocalSkillVersion(pkg, manifest, skillPath),
+		Enabled:      enabled,
+		Path:         skillPath,
+		SkillKey:     skillKey,
+		Source:       source,
+		ConfigSchema: configSchema,
 	}
 	if len(metadata) > 0 {
 		skill.Metadata = metadata
@@ -949,6 +980,113 @@ func parseSkillInfo(skillPath, source string, skillEntries map[string]interface{
 		skill.Requires = requires
 	}
 	return skill, true
+}
+
+func compactSkillManifestMetadata(manifest map[string]interface{}) map[string]interface{} {
+	if len(manifest) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{"name", "displayName", "description", "version", "author", "entry", "language"} {
+		if value := trimmedString(manifest[key], ""); value != "" {
+			out[key] = value
+		}
+	}
+	if tags := asStringSlice(manifest["tags"]); len(tags) > 0 {
+		out["tags"] = tags
+	}
+	return out
+}
+
+func normalizeSkillConfigSchema(value interface{}) []skillConfigField {
+	items, ok := value.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]skillConfigField, 0, len(items))
+	seen := map[string]bool{}
+	for _, item := range items {
+		fieldMap := asMapAny(item)
+		key := trimmedString(fieldMap["key"], "")
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		field := skillConfigField{
+			Key:         key,
+			Label:       trimmedString(fieldMap["label"], ""),
+			Type:        normalizeSkillConfigType(trimmedString(fieldMap["type"], "text")),
+			Placeholder: trimmedString(fieldMap["placeholder"], ""),
+			Help:        trimmedString(fieldMap["help"], ""),
+			Required:    skillManifestBool(fieldMap["required"]),
+			Options:     normalizeSkillConfigOptions(fieldMap["options"]),
+		}
+		if defaultValue, ok := fieldMap["defaultValue"]; ok {
+			field.DefaultValue = defaultValue
+		} else if defaultValue, ok := fieldMap["default"]; ok {
+			field.DefaultValue = defaultValue
+		}
+		out = append(out, field)
+	}
+	return out
+}
+
+func normalizeSkillConfigType(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "text", "password", "textarea", "select", "toggle", "number":
+		return value
+	default:
+		return "text"
+	}
+}
+
+func normalizeSkillConfigOptions(value interface{}) []skillConfigOption {
+	switch typed := value.(type) {
+	case []interface{}:
+		out := make([]skillConfigOption, 0, len(typed))
+		for _, item := range typed {
+			switch option := item.(type) {
+			case map[string]interface{}:
+				if rawValue, ok := option["value"]; ok {
+					out = append(out, skillConfigOption{Label: trimmedString(option["label"], trimmedString(rawValue, "")), Value: rawValue})
+					continue
+				}
+			case string:
+				option = strings.TrimSpace(option)
+				if option != "" {
+					out = append(out, skillConfigOption{Label: option, Value: option})
+				}
+				continue
+			}
+			text := trimmedString(item, "")
+			if text != "" {
+				out = append(out, skillConfigOption{Label: text, Value: text})
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func skillConfigKeys(fields []skillConfigField) []string {
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field.Key != "" {
+			out = append(out, field.Key)
+		}
+	}
+	return out
+}
+
+func resolveSkillName(frontmatter, manifest, pkg map[string]interface{}, fallback string) string {
+	for _, value := range []interface{}{frontmatter["name"], manifest["displayName"], manifest["name"], pkg["name"]} {
+		if name := trimmedString(value, ""); name != "" {
+			return name
+		}
+	}
+	return fallback
 }
 
 func resolveOpenClawMetadata(frontmatter map[string]interface{}) map[string]interface{} {
@@ -966,8 +1104,11 @@ func resolveOpenClawMetadata(frontmatter map[string]interface{}) map[string]inte
 	return map[string]interface{}{}
 }
 
-func resolveSkillDescription(frontmatter, pkg map[string]interface{}, body string) string {
+func resolveSkillDescription(frontmatter, manifest, pkg map[string]interface{}, body string) string {
 	if desc := trimmedString(frontmatter["description"], ""); desc != "" {
+		return desc
+	}
+	if desc := trimmedString(manifest["description"], ""); desc != "" {
 		return desc
 	}
 	if desc := trimmedString(pkg["description"], ""); desc != "" {
@@ -983,8 +1124,11 @@ func resolveSkillDescription(frontmatter, pkg map[string]interface{}, body strin
 	return ""
 }
 
-func resolveLocalSkillVersion(pkg map[string]interface{}, skillPath string) string {
+func resolveLocalSkillVersion(pkg, manifest map[string]interface{}, skillPath string) string {
 	if version := trimmedString(pkg["version"], ""); version != "" {
+		return version
+	}
+	if version := trimmedString(manifest["version"], ""); version != "" {
 		return version
 	}
 	raw, err := os.ReadFile(filepath.Join(skillPath, ".clawhub", "origin.json"))
@@ -1464,4 +1608,15 @@ func trimmedString(value interface{}, fallback string) string {
 		return text
 	}
 	return fallback
+}
+
+func skillManifestBool(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
 }

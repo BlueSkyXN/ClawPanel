@@ -21,6 +21,23 @@ interface SkillEntry {
   requires?: { env?: string[]; bins?: string[]; anyBins?: string[]; config?: string[] };
   path?: string;
   skillKey?: string;
+  configSchema?: SkillConfigField[];
+}
+
+interface SkillConfigOption {
+  label?: string;
+  value: unknown;
+}
+
+interface SkillConfigField {
+  key: string;
+  label?: string;
+  type?: 'text' | 'password' | 'textarea' | 'select' | 'toggle' | 'number';
+  placeholder?: string;
+  help?: string;
+  required?: boolean;
+  options?: SkillConfigOption[];
+  defaultValue?: unknown;
 }
 
 interface PluginEntry {
@@ -101,6 +118,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeSkillConfigFields(skill: SkillEntry | null): SkillConfigField[] {
+  if (!skill) return [];
+  const schema = Array.isArray(skill.configSchema) ? skill.configSchema.filter(field => field && typeof field.key === 'string' && field.key) : [];
+  const seen = new Set(schema.map(field => field.key));
+  const declared = Array.isArray(skill.requires?.config) ? skill.requires!.config : [];
+  const merged = [...schema];
+  declared.forEach((key) => {
+    if (!key || seen.has(key)) return;
+    merged.push({ key, type: 'text' });
+  });
+  return merged;
+}
+
+function normalizeConfigInputValue(field: SkillConfigField, value: unknown): string | number | boolean {
+  if (field.type === 'toggle') return value === true;
+  if (field.type === 'number') return typeof value === 'number' ? value : (typeof value === 'string' && value.trim() ? Number(value) : '');
+  return typeof value === 'string' ? value : (value == null ? '' : String(value));
+}
+
 function normalizeClawHubRegistryBase(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) return '';
   try {
@@ -150,7 +186,8 @@ export default function Skills() {
   const [configSkill, setConfigSkill] = useState<SkillEntry | null>(null);
   const [configSnapshot, setConfigSnapshot] = useState<SkillConfigSnapshot | null>(null);
   const [configLoading, setConfigLoading] = useState(false);
-  const [configAction, setConfigAction] = useState<'export' | 'import' | ''>('');
+  const [configAction, setConfigAction] = useState<'export' | 'import' | 'save' | ''>('');
+  const [configDraft, setConfigDraft] = useState<Record<string, unknown>>({});
   const [pendingConfigImport, setPendingConfigImport] = useState<PendingSkillConfigImport | null>(null);
   const [hubCategory, setHubCategory] = useState<string>('all');
   const [hubPage, setHubPage] = useState(1);
@@ -177,6 +214,8 @@ export default function Skills() {
   const [skillHubCliInstalling, setSkillHubCliInstalling] = useState(false);
   const [storeEverLoaded, setStoreEverLoaded] = useState(false);
   const skillHubPageSize = 30;
+  const configFields = useMemo(() => normalizeSkillConfigFields(configSkill), [configSkill]);
+  const hasStructuredConfig = configFields.length > 0;
 
   const debouncedHubSearch = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -709,9 +748,45 @@ export default function Skills() {
     }
   };
 
+  const handleSaveSkillConfig = async () => {
+    if (!configSkill) return;
+    const skillKey = configSkill.skillKey || configSkill.id;
+    if (!skillKey || configFields.length === 0) return;
+    const values: Record<string, unknown> = {};
+    configFields.forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(configDraft, field.key)) return;
+      const rawValue = configDraft[field.key];
+      if (field.type === 'number' && rawValue === '') {
+        return;
+      }
+      values[field.key] = rawValue;
+    });
+    setConfigAction('save');
+    try {
+      const r = await api.updateSkillConfig(skillKey, values, selectedAgent);
+      if (r.ok) {
+        setConfigSnapshot({
+          skillId: r.skillId || configSkill.id,
+          skillKey: r.skillKey || skillKey,
+          configKeys: Array.isArray(r.configKeys) ? r.configKeys : (configSkill.requires?.config || []),
+          values: isPlainObject(r.values) ? r.values : {},
+        });
+        setMsg(`${configSkill.name} ${t.common.save}`);
+      } else {
+        setMsg((r.error as string) || t.common.operationFailed);
+      }
+    } catch {
+      setMsg(t.common.operationFailed);
+    } finally {
+      setConfigAction('');
+      setTimeout(() => setMsg(''), 3000);
+    }
+  };
+
   useEffect(() => {
     if (!configSkill) {
       setConfigSnapshot(null);
+      setConfigDraft({});
       setPendingConfigImport(null);
       setConfigAction('');
       return;
@@ -723,11 +798,27 @@ export default function Skills() {
         configKeys: [],
         values: {},
       });
+      setConfigDraft({});
       setPendingConfigImport(null);
       return;
     }
     void loadSkillConfigSnapshot(configSkill);
   }, [configSkill, loadSkillConfigSnapshot]);
+
+  useEffect(() => {
+    if (!configSkill) return;
+    const nextDraft: Record<string, unknown> = {};
+    configFields.forEach((field) => {
+      if (configSnapshot && Object.prototype.hasOwnProperty.call(configSnapshot.values, field.key)) {
+        nextDraft[field.key] = configSnapshot.values[field.key];
+      } else if (field.defaultValue !== undefined) {
+        nextDraft[field.key] = field.defaultValue;
+      } else if (field.type === 'toggle') {
+        nextDraft[field.key] = false;
+      }
+    });
+    setConfigDraft(nextDraft);
+  }, [configFields, configSnapshot, configSkill]);
 
   const filtered = skills.filter(s => {
     if (filter === 'enabled' && !s.enabled) return false;
@@ -1475,28 +1566,90 @@ export default function Skills() {
                 </button>
               </div>
             </div>
-            <div className="flex-1 overflow-auto p-6 space-y-6">
-              {configSkill.requires?.config && configSkill.requires.config.length > 0 && (
+              <div className="flex-1 overflow-auto p-6 space-y-6">
+              {hasStructuredConfig && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                       <FolderOpen size={14} /> {t.skills.configCurrentValues}
                     </h4>
-                    {configLoading ? <span className="text-[11px] text-gray-400">{t.common.loading}</span> : null}
+                    <div className="flex items-center gap-2">
+                      {configLoading ? <span className="text-[11px] text-gray-400">{t.common.loading}</span> : null}
+                      <button
+                        onClick={handleSaveSkillConfig}
+                        disabled={configLoading || !!configAction}
+                        className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors'} disabled:opacity-50`}
+                      >
+                        {configAction === 'save' ? <Loader2 size={14} className="animate-spin inline mr-1" /> : null}
+                        {t.common.save}
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-3">
-                    {configSkill.requires.config.map(configKey => {
-                      const hasValue = Object.prototype.hasOwnProperty.call(configSnapshot?.values || {}, configKey);
-                      const value = hasValue ? configSnapshot?.values[configKey] : undefined;
+                    {configFields.map(field => {
+                      const hasValue = Object.prototype.hasOwnProperty.call(configSnapshot?.values || {}, field.key);
+                      const inputValue = normalizeConfigInputValue(field, configDraft[field.key]);
                       return (
-                        <div key={configKey} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800">
+                        <div key={field.key} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 space-y-3">
                           <div className="flex items-center justify-between mb-2">
-                            <code className="text-sm font-bold font-mono text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded">{configKey}</code>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-gray-900 dark:text-white">{field.label || field.key}</span>
+                                {field.required ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 font-medium">{t.common.required}</span> : null}
+                              </div>
+                              <code className="text-xs font-bold font-mono text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 px-2 py-0.5 rounded inline-block">{field.key}</code>
+                            </div>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${hasValue ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'}`}>
                               {hasValue ? t.skills.configValueSet : t.skills.configValueUnset}
                             </span>
                           </div>
-                          <pre className="bg-gray-900 dark:bg-black rounded-lg p-3 text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-all overflow-x-auto">{hasValue ? JSON.stringify(value, null, 2) : t.skills.configValueUnset}</pre>
+                          {field.help ? <p className="text-xs text-gray-500 dark:text-gray-400">{field.help}</p> : null}
+                          {field.type === 'textarea' ? (
+                            <textarea
+                              value={String(inputValue)}
+                              onChange={e => setConfigDraft(prev => ({ ...prev, [field.key]: e.target.value }))}
+                              placeholder={field.placeholder || field.key}
+                              rows={4}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all"
+                            />
+                          ) : field.type === 'select' ? (
+                            <select
+                              value={String(inputValue)}
+                              onChange={e => {
+                                const matched = (field.options || []).find(option => String(option.value) === e.target.value);
+                                setConfigDraft(prev => ({ ...prev, [field.key]: matched ? matched.value : e.target.value }));
+                              }}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all"
+                            >
+                              <option value="">{field.placeholder || field.key}</option>
+                              {(field.options || []).map((option, idx) => (
+                                <option key={`${field.key}-${idx}`} value={String(option.value)}>{option.label || String(option.value)}</option>
+                              ))}
+                            </select>
+                          ) : field.type === 'toggle' ? (
+                            <label className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 cursor-pointer">
+                              <span className="text-sm text-gray-700 dark:text-gray-300">{field.help || field.label || field.key}</span>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(inputValue)}
+                                onChange={e => setConfigDraft(prev => ({ ...prev, [field.key]: e.target.checked }))}
+                                className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                              />
+                            </label>
+                          ) : (
+                            <input
+                              type={field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'}
+                              value={field.type === 'number' && inputValue === '' ? '' : String(inputValue)}
+                              onChange={e => setConfigDraft(prev => ({
+                                ...prev,
+                                [field.key]: field.type === 'number'
+                                  ? (e.target.value === '' ? '' : Number(e.target.value))
+                                  : e.target.value,
+                              }))}
+                              placeholder={field.placeholder || field.key}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all"
+                            />
+                          )}
                         </div>
                       );
                     })}
