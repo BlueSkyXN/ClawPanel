@@ -1,13 +1,13 @@
 {
-  "latest_version": "5.2.14",
-  "release_time": "2026-03-19T23:10:00+08:00",
-  "release_note": "## ClawPanel Pro v5.2.14\n\n- 修复面板安装技能后目录所有权可能异常的问题\n- 优化活动日志与最近活动的真实消息展示\n- 修复企业微信通道状态映射并继续中文化智能体页面",
+  "latest_version": "5.2.15",
+  "release_time": "2026-03-19T23:40:00+08:00",
+  "release_note": "## ClawPanel Pro v5.2.15\n\n- 修复技能目录所有权同步逻辑的跨平台构建问题\n- 继续修复面板安装技能后的目录 owner 对齐\n- 收口活动日志、最近活动与企业微信状态体验",
   "download_urls": {
-    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.14/clawpanel-v5.2.14-linux-amd64",
-    "linux_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.14/clawpanel-v5.2.14-linux-arm64",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.14/clawpanel-v5.2.14-darwin-amd64",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.14/clawpanel-v5.2.14-darwin-arm64",
-    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.14/clawpanel-v5.2.14-windows-amd64.exe"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.15/clawpanel-v5.2.15-linux-amd64",
+    "linux_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.15/clawpanel-v5.2.15-linux-arm64",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.15/clawpanel-v5.2.15-darwin-amd64",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.15/clawpanel-v5.2.15-darwin-arm64",
+    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.2.15/clawpanel-v5.2.15-windows-amd64.exe"
   },
   "major_change": false,
   "change_warning": ""
