@@ -1520,7 +1520,7 @@ export default function Channels() {
                   ? 'border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100'
                   : 'border-gray-200 dark:border-gray-800 text-gray-400'}`}
             >
-              <option value="">{defaultHint ? `未配置（默认 ${defaultHint}）` : '未配置'}</option>
+              <option value="">{defaultHint ? t.channels.notConfiguredWithDefault.replace('{value}', defaultHint) : t.common.notConfigured}</option>
               {fieldOptions?.map(opt => (
                 <option key={opt} value={opt}>{opt}</option>
               ))}
@@ -1532,7 +1532,7 @@ export default function Channels() {
             rows={field.rows || 3}
             value={textareaValue}
             onChange={e => handleFieldDraftChange(channelId, field, e.target.value)}
-            placeholder={field.placeholder || '未配置'}
+            placeholder={field.placeholder || t.common.notConfigured}
             className={`w-full px-3.5 py-2 text-sm border rounded-lg bg-white dark:bg-gray-900 transition-all focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/30 focus:border-violet-500 outline-none resize-y
               ${hasExplicitValue
                 ? 'border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100'
@@ -1545,7 +1545,7 @@ export default function Channels() {
               type={field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'}
               value={currentVal ?? ''}
               onChange={e => handleFieldDraftChange(channelId, field, e.target.value)}
-              placeholder={field.placeholder || '未配置'}
+              placeholder={field.placeholder || t.common.notConfigured}
               className={`w-full px-3.5 py-2 text-sm border rounded-lg bg-white dark:bg-gray-900 transition-all focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/30 focus:border-violet-500 outline-none
                 ${hasExplicitValue
                   ? 'border-gray-300 dark:border-gray-700 text-gray-900 dark:text-gray-100'
@@ -1565,7 +1565,7 @@ export default function Channels() {
 
         {defaultHint && (
           <p className="mt-1 text-[11px] text-gray-400">
-            未显式设置时默认：<span className="font-mono">{defaultHint}</span>
+            {t.channels.defaultWhenUnset.replace('{value}', defaultHint)}
           </p>
         )}
         {channelId === 'feishu' && field.key === 'groupAllowFrom' && (
@@ -1823,10 +1823,10 @@ export default function Channels() {
                           </button>
                           <button onClick={handleRestartNapcat} disabled={restarting} className={`${modern ? 'page-modern-warn px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/50 disabled:opacity-50 transition-colors'}`}>
                             {restarting ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                            {restarting ? '重启中...' : '重启NapCat'}
+                            {restarting ? t.channels.restartingNapcat : t.channels.restartNapcat}
                           </button>
                           <button onClick={handleDeleteQQChannel} className={`${modern ? 'page-modern-danger px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors'}`}>
-                            <Trash2 size={14} />删除QQ通道
+                            <Trash2 size={14} />{t.channels.deleteQQChannel}
                           </button>
                         </>
                       )}
@@ -1853,11 +1853,11 @@ export default function Channels() {
                       }`} />
                       <div>
                         <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                          {napcatStatus.status === 'online' ? '🟢 NapCat 在线' :
-                           napcatStatus.status === 'reconnecting' ? '🟡 正在重连...' :
-                           napcatStatus.status === 'login_expired' ? '🟠 登录已失效' :
-                           napcatStatus.status === 'stopped' ? '🔴 容器已停止' :
-                           '🔴 NapCat 离线'}
+                          {napcatStatus.status === 'online' ? t.channels.napcatStatusOnline :
+                           napcatStatus.status === 'reconnecting' ? t.channels.napcatStatusReconnecting :
+                           napcatStatus.status === 'login_expired' ? t.channels.napcatStatusLoginExpired :
+                           napcatStatus.status === 'stopped' ? t.channels.napcatStatusStopped :
+                           t.channels.napcatStatusOffline}
                         </span>
                         {napcatStatus.qqId && (
                           <span className="ml-2 text-xs text-gray-500">
@@ -1869,19 +1869,19 @@ export default function Channels() {
                     <div className="flex items-center gap-2">
                       {napcatStatus.autoReconnect && (
                         <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
-                          自动重连 {napcatStatus.reconnectCount > 0 ? `(${napcatStatus.reconnectCount}/${napcatStatus.maxReconnect})` : '已启用'}
+                          {t.channels.autoReconnect} {napcatStatus.reconnectCount > 0 ? `(${napcatStatus.reconnectCount}/${napcatStatus.maxReconnect})` : t.channels.autoReconnectEnabled}
                         </span>
                       )}
                       {(napcatStatus.status === 'offline' || napcatStatus.status === 'stopped') && (
                         <button onClick={handleReconnect} disabled={reconnecting}
                           className={`${modern ? 'page-modern-accent px-2.5 py-1 text-[11px]' : 'flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors'}`}>
                           <RefreshCw size={11} className={reconnecting ? 'animate-spin' : ''} />
-                          {reconnecting ? '重连中...' : '手动重连'}
+                          {reconnecting ? t.channels.reconnecting : t.channels.manualReconnect}
                         </button>
                       )}
                       <button onClick={() => { setShowReconnectLogs(!showReconnectLogs); if (!showReconnectLogs) loadReconnectLogs(); }}
                         className="text-[11px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors underline">
-                        {showReconnectLogs ? '收起日志' : '重连日志'}
+                        {showReconnectLogs ? t.channels.hideReconnectLogs : t.channels.showReconnectLogs}
                       </button>
                     </div>
                   </div>
