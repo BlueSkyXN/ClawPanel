@@ -198,6 +198,22 @@ make installer    # Build Windows exe installer
 > npm config set registry https://registry.npmmirror.com
 > ```
 
+### Local Testing and Coverage
+
+Before submitting changes, it is recommended to run:
+
+```bash
+go test ./...
+go test ./... -coverprofile=local/coverage.out
+go tool cover -func=local/coverage.out
+```
+
+For a faster verification pass focused on recent changes, you can start with:
+
+```bash
+go test ./internal/eventlog ./internal/updater
+```
+
 ## GitHub Actions Automation
 
 The repository now includes two workflows for testing and release packaging:

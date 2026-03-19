@@ -397,6 +397,22 @@ make installer    # 构建 Windows exe 安装包
 > npm config set registry https://registry.npmmirror.com
 > ```
 
+### 本地测试与覆盖率
+
+开发或提交前，建议至少运行一次以下命令：
+
+```bash
+go test ./...
+go test ./... -coverprofile=local/coverage.out
+go tool cover -func=local/coverage.out
+```
+
+如果只想快速验证近期改动，可先跑相关包：
+
+```bash
+go test ./internal/eventlog ./internal/updater
+```
+
 ## GitHub Actions 自动化
 
 已内置两条工作流，覆盖自动测试与自动打包发布：
