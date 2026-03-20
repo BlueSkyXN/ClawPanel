@@ -32,9 +32,45 @@ const FAKE_CLAWHUB_SKILLS = [
 let mockSkillHubCliInstalled = false;
 
 const FAKE_CRON_JOBS = [
-  { id: 'cron_1', name: '每日早报', enabled: true, schedule: { kind: 'cron', expr: '0 8 * * *' }, agentId: 'main', sessionTarget: 'main', wakeMode: 'now', payload: { kind: 'text', text: '请生成今日早报，包含科技、AI、财经要闻', deliver: true, channel: 'qq' }, state: { lastRunAtMs: Date.now() - 86400000, lastStatus: 'ok' }, createdAtMs: Date.now() - 604800000 },
-  { id: 'cron_2', name: '系统健康检查', enabled: true, schedule: { kind: 'every', everyMs: 1800000 }, agentId: 'main', sessionTarget: 'isolated', wakeMode: 'now', payload: { kind: 'text', text: '检查系统状态并报告', deliver: false }, state: { lastRunAtMs: Date.now() - 1800000, lastStatus: 'ok' }, createdAtMs: Date.now() - 1209600000 },
-  { id: 'cron_3', name: '周报生成', enabled: false, schedule: { kind: 'cron', expr: '0 18 * * 5' }, agentId: 'main', sessionTarget: 'main', wakeMode: 'now', payload: { kind: 'text', text: '生成本周工作总结', deliver: true, channel: 'qq' }, state: {}, createdAtMs: Date.now() - 2592000000 },
+  {
+    id: 'cron_1',
+    name: '每日早报',
+    enabled: true,
+    schedule: { kind: 'cron', expr: '0 8 * * *' },
+    agentId: 'main',
+    sessionTarget: 'main',
+    wakeMode: 'now',
+    payload: { kind: 'systemEvent', text: '请生成今日早报，包含科技、AI、财经要闻' },
+    delivery: { mode: 'announce', channel: 'feishu', accountId: 'default' },
+    state: { lastRunAtMs: Date.now() - 86400000, lastStatus: 'ok', lastDeliveryStatus: 'delivered' },
+    createdAtMs: Date.now() - 604800000,
+  },
+  {
+    id: 'cron_2',
+    name: '系统健康检查',
+    enabled: true,
+    schedule: { kind: 'every', everyMs: 1800000 },
+    agentId: 'main',
+    sessionTarget: 'isolated',
+    wakeMode: 'now',
+    payload: { kind: 'agentTurn', message: '检查系统状态并报告' },
+    delivery: { mode: 'webhook', to: 'https://example.com/webhook/health' },
+    state: { lastRunAtMs: Date.now() - 1800000, lastStatus: 'ok', lastDeliveryStatus: 'delivered' },
+    createdAtMs: Date.now() - 1209600000,
+  },
+  {
+    id: 'cron_3',
+    name: '周报生成',
+    enabled: false,
+    schedule: { kind: 'cron', expr: '0 18 * * 5' },
+    agentId: 'main',
+    sessionTarget: 'main',
+    wakeMode: 'now',
+    payload: { kind: 'systemEvent', text: '生成本周工作总结' },
+    delivery: { mode: 'none' },
+    state: {},
+    createdAtMs: Date.now() - 2592000000,
+  },
 ];
 
 const FAKE_AGENTS = {
@@ -149,7 +185,30 @@ const FAKE_CONFIG: any = {
       'openai': { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-demo-***', api: 'openai-completions', models: ['gpt-4o', 'gpt-4o-mini'] },
     },
   },
-  agents: { defaults: { model: { primary: 'deepseek/deepseek-chat' } } },
+  cron: {
+    enabled: true,
+    store: '',
+    maxConcurrentRuns: 4,
+    retry: { maxAttempts: 3, backoffMs: [30000, 60000, 300000] },
+    runLog: { maxBytes: 2097152, keepLines: 2000 },
+    failureAlert: { enabled: false, after: 1, cooldownMs: 60000, mode: 'announce' },
+    failureDestination: { mode: 'webhook', to: 'https://example.com/hooks/cron-failure' },
+    webhook: 'https://example.com/hooks/cron',
+    webhookToken: 'demo-cron-token',
+  },
+  agents: {
+    defaults: {
+      model: { primary: 'deepseek/deepseek-chat' },
+      heartbeat: {
+        every: '30m',
+        target: 'none',
+        ackMaxChars: 300,
+        lightContext: true,
+        includeReasoning: false,
+        prompt: '请执行轻量状态检查并在需要时输出简要确认。',
+      },
+    },
+  },
   channels: {
     qq: { enabled: true, ownerQQ: '123456789' },
     feishu: {

@@ -2103,3 +2103,162 @@ func TestSaveCronJobsRollsBackOpenClawJSONWhenMirrorWriteFails(t *testing.T) {
 		t.Fatalf("expected rollback to restore old-job, got %q", got)
 	}
 }
+
+func TestValidateCronJobsSessionTargetsNormalizesWebhookDeliveryURLToTo(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list":    []interface{}{map[string]interface{}{"id": "main"}},
+		},
+	})
+
+	jobs := []map[string]interface{}{
+		{
+			"id":            "j1",
+			"sessionTarget": "isolated",
+			"delivery": map[string]interface{}{
+				"mode": "webhook",
+				"url":  "https://example.com/hook",
+			},
+		},
+	}
+
+	if err := validateCronJobsSessionTargets(cfg, jobs); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	delivery, _ := jobs[0]["delivery"].(map[string]interface{})
+	if got := strings.TrimSpace(toString(delivery["to"])); got != "https://example.com/hook" {
+		t.Fatalf("expected webhook to field normalized from url, got %q", got)
+	}
+	if _, exists := delivery["url"]; exists {
+		t.Fatalf("expected legacy delivery.url removed after normalization")
+	}
+}
+
+func TestValidateCronJobsSessionTargetsRejectsWebhookMissingTo(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list":    []interface{}{map[string]interface{}{"id": "main"}},
+		},
+	})
+
+	jobs := []map[string]interface{}{
+		{
+			"id":            "j1",
+			"sessionTarget": "isolated",
+			"delivery": map[string]interface{}{
+				"mode": "webhook",
+			},
+		},
+	}
+
+	err := validateCronJobsSessionTargets(cfg, jobs)
+	if err == nil {
+		t.Fatalf("expected error for webhook delivery without target")
+	}
+	if !strings.Contains(err.Error(), "delivery.mode=webhook 时必须指定非空 to") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCronJobsNormalizesWebhookDeliveryURLField(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"cron": map[string]interface{}{
+			"jobs": []interface{}{
+				map[string]interface{}{
+					"id": "j1",
+					"delivery": map[string]interface{}{
+						"mode": "webhook",
+						"url":  "https://example.com/from-openclaw-json",
+					},
+				},
+			},
+		},
+	})
+
+	r := gin.New()
+	r.GET("/system/cron", GetCronJobs(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/system/cron", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		OK   bool                     `json:"ok"`
+		Jobs []map[string]interface{} `json:"jobs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.OK || len(resp.Jobs) != 1 {
+		t.Fatalf("unexpected response payload: %+v", resp)
+	}
+	delivery, _ := resp.Jobs[0]["delivery"].(map[string]interface{})
+	if got := strings.TrimSpace(toString(delivery["to"])); got != "https://example.com/from-openclaw-json" {
+		t.Fatalf("expected webhook to normalized from url, got %q", got)
+	}
+	if _, exists := delivery["url"]; exists {
+		t.Fatalf("expected legacy delivery.url removed in get response")
+	}
+}
+
+func TestValidateCronJobsSessionTargetsNormalizesMainAnnounceToNone(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list":    []interface{}{map[string]interface{}{"id": "main"}},
+		},
+	})
+
+	jobs := []map[string]interface{}{
+		{
+			"id":            "j1",
+			"sessionTarget": "main",
+			"delivery": map[string]interface{}{
+				"mode":      "announce",
+				"channel":   "feishu",
+				"accountId": "default",
+				"to":        "oc://channel",
+				"failureDestination": map[string]interface{}{
+					"mode": "webhook",
+					"to":   "https://example.com/failure",
+				},
+			},
+		},
+	}
+
+	if err := validateCronJobsSessionTargets(cfg, jobs); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	delivery, _ := jobs[0]["delivery"].(map[string]interface{})
+	if got := strings.TrimSpace(toString(delivery["mode"])); got != "none" {
+		t.Fatalf("expected main announce normalized to none, got %q", got)
+	}
+	for _, key := range []string{"channel", "accountId", "to", "url", "bestEffort", "failureDestination"} {
+		if _, exists := delivery[key]; exists {
+			t.Fatalf("expected field %q removed after normalization", key)
+		}
+	}
+}

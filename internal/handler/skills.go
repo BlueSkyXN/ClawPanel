@@ -412,10 +412,25 @@ func GetCronJobs(cfg *config.Config) gin.HandlerFunc {
 			if !ok {
 				continue
 			}
-			// If job already has canonical delivery.mode, skip; remove incomplete delivery objects
+			// If job already has delivery.mode, keep it and normalize webhook fields
+			// to canonical delivery.to (legacy delivery.url remains read-compatible).
 			if del, ok := job["delivery"].(map[string]interface{}); ok {
 				if m, hasMode := del["mode"]; hasMode {
-					if mStr, _ := m.(string); mStr != "" {
+					mode := strings.ToLower(strings.TrimSpace(toString(m)))
+					if mode != "" {
+						del["mode"] = mode
+						if mode == "webhook" {
+							target := strings.TrimSpace(toString(del["to"]))
+							if target == "" {
+								target = strings.TrimSpace(toString(del["url"]))
+							}
+							if target != "" {
+								del["to"] = target
+							}
+							delete(del, "url")
+						}
+						job["delivery"] = del
+						jobs[i] = job
 						continue
 					}
 				}
@@ -1391,22 +1406,50 @@ func validateCronJobsSessionTargets(cfg *config.Config, jobs []map[string]interf
 	// Validate delivery configuration
 	for _, job := range jobs {
 		if deliveryMap, ok := job["delivery"].(map[string]interface{}); ok {
-			mode, _ := deliveryMap["mode"].(string)
-			if mode == "webhook" {
-				url, _ := deliveryMap["url"].(string)
-				url = strings.TrimSpace(url)
-				if url == "" {
-					return fmt.Errorf("delivery.mode=webhook 时必须指定非空 url")
+			mode := strings.ToLower(strings.TrimSpace(toString(deliveryMap["mode"])))
+			target := strings.TrimSpace(toString(job["sessionTarget"]))
+			if target == "" {
+				// SaveCronJobs will normalize empty sessionTarget to "main".
+				target = "main"
+			}
+			switch mode {
+			case "":
+				return fmt.Errorf("delivery.mode 不能为空")
+			case "none":
+				deliveryMap["mode"] = "none"
+			case "announce":
+				if target == "main" {
+					// Backward-compat: official runtime strips non-webhook delivery on
+					// main session; normalize legacy announce configs to none.
+					deliveryMap["mode"] = "none"
+					for _, field := range []string{"channel", "to", "accountId", "bestEffort", "url", "failureDestination"} {
+						delete(deliveryMap, field)
+					}
+					continue
 				}
-				urlLower := strings.ToLower(url)
-				if !strings.HasPrefix(urlLower, "http://") && !strings.HasPrefix(urlLower, "https://") {
-					return fmt.Errorf("webhook url 必须以 http:// 或 https:// 开头")
+				deliveryMap["mode"] = "announce"
+			case "webhook":
+				target := strings.TrimSpace(toString(deliveryMap["to"]))
+				if target == "" {
+					target = strings.TrimSpace(toString(deliveryMap["url"]))
+				}
+				if target == "" {
+					return fmt.Errorf("delivery.mode=webhook 时必须指定非空 to")
+				}
+				targetLower := strings.ToLower(target)
+				if !strings.HasPrefix(targetLower, "http://") && !strings.HasPrefix(targetLower, "https://") {
+					return fmt.Errorf("webhook to 必须以 http:// 或 https:// 开头")
 				}
 				for _, blocked := range []string{"://localhost", "://127.0.0.1", "://0.0.0.0", "://[::1]", "://169.254.169.254"} {
-					if strings.Contains(urlLower, blocked) {
-						return fmt.Errorf("webhook url 不允许指向内部地址: %s", url)
+					if strings.Contains(targetLower, blocked) {
+						return fmt.Errorf("webhook to 不允许指向内部地址: %s", target)
 					}
 				}
+				deliveryMap["mode"] = "webhook"
+				deliveryMap["to"] = target
+				delete(deliveryMap, "url")
+			default:
+				return fmt.Errorf("delivery.mode %q 无效，有效值为 none/announce/webhook", mode)
 			}
 		}
 	}

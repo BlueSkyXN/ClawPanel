@@ -338,6 +338,10 @@ export default function SystemConfig() {
   const getVal = (path: string): any => {
     const value = path.split('.').reduce((o: any, k: string) => o?.[k], config);
     if (path === 'tools.sessions.visibility') return normalizeSessionVisibility(value);
+    if (path === 'cron.retry.backoffMs') {
+      if (Array.isArray(value)) return JSON.stringify(value);
+      return value;
+    }
     return value;
   };
   const syncAllowedModels = (draft: any) => {
@@ -437,13 +441,112 @@ export default function SystemConfig() {
       }
     }
 
+    const cron = clone?.cron;
+    if (cron && typeof cron === 'object' && !Array.isArray(cron)) {
+      if (typeof cron.store === 'string') {
+        const store = cron.store.trim();
+        if (!store || store === 'file' || store === 'sqlite') delete cron.store;
+        else cron.store = store;
+      }
+
+      if (cron.retry && typeof cron.retry === 'object' && !Array.isArray(cron.retry)) {
+        const backoffRaw = cron.retry.backoffMs;
+        if (typeof backoffRaw === 'string') {
+          const trimmed = backoffRaw.trim();
+          if (!trimmed) {
+            delete cron.retry.backoffMs;
+          } else {
+            let parsedList: number[] | null = null;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (Array.isArray(parsed)) parsedList = parsed.map((item: any) => Number(item));
+            } catch {}
+            if (!parsedList) {
+              parsedList = trimmed.split(/[,\s]+/).filter(Boolean).map(item => Number(item));
+            }
+            if (
+              parsedList.length === 0 ||
+              parsedList.some(item => !Number.isFinite(item) || item < 0 || !Number.isInteger(item))
+            ) {
+              throw new Error('Cron 重试退避毫秒数组格式无效，应为非负整数数组');
+            }
+            cron.retry.backoffMs = parsedList.map(item => Math.floor(item));
+          }
+        } else if (typeof backoffRaw === 'number') {
+          if (Number.isFinite(backoffRaw) && backoffRaw >= 0) cron.retry.backoffMs = [Math.floor(backoffRaw)];
+          else delete cron.retry.backoffMs;
+        } else if (Array.isArray(backoffRaw)) {
+          const parsedList = backoffRaw.map((item: any) => Number(item));
+          if (
+            parsedList.length === 0 ||
+            parsedList.some(item => !Number.isFinite(item) || item < 0 || !Number.isInteger(item))
+          ) {
+            throw new Error('Cron 重试退避毫秒数组格式无效，应为非负整数数组');
+          }
+          cron.retry.backoffMs = parsedList.map(item => Math.floor(item));
+        }
+      }
+
+      if (typeof cron.failureAlert === 'boolean') {
+        cron.failureAlert = { enabled: cron.failureAlert };
+      } else if (cron.failureAlert && (typeof cron.failureAlert !== 'object' || Array.isArray(cron.failureAlert))) {
+        delete cron.failureAlert;
+      }
+
+      if (cron.failureAlert && typeof cron.failureAlert === 'object' && !Array.isArray(cron.failureAlert)) {
+        if (typeof cron.failureAlert.mode === 'string') {
+          const mode = cron.failureAlert.mode.trim();
+          if (mode === 'announce' || mode === 'webhook') cron.failureAlert.mode = mode;
+          else delete cron.failureAlert.mode;
+        }
+        if (typeof cron.failureAlert.accountId === 'string') {
+          const accountId = cron.failureAlert.accountId.trim();
+          if (accountId) cron.failureAlert.accountId = accountId;
+          else delete cron.failureAlert.accountId;
+        }
+      }
+
+      if (typeof cron.failureDestination === 'string') {
+        const to = cron.failureDestination.trim();
+        if (to) cron.failureDestination = { to };
+        else delete cron.failureDestination;
+      } else if (
+        cron.failureDestination &&
+        (typeof cron.failureDestination !== 'object' || Array.isArray(cron.failureDestination))
+      ) {
+        delete cron.failureDestination;
+      }
+
+      if (cron.failureDestination && typeof cron.failureDestination === 'object' && !Array.isArray(cron.failureDestination)) {
+        for (const key of ['channel', 'to', 'accountId']) {
+          if (typeof cron.failureDestination[key] === 'string') {
+            const trimmed = cron.failureDestination[key].trim();
+            if (trimmed) cron.failureDestination[key] = trimmed;
+            else delete cron.failureDestination[key];
+          }
+        }
+        if (typeof cron.failureDestination.mode === 'string') {
+          const mode = cron.failureDestination.mode.trim();
+          if (mode === 'announce' || mode === 'webhook') cron.failureDestination.mode = mode;
+          else delete cron.failureDestination.mode;
+        }
+      }
+    }
+
     const numericFields: CfgField[] = [
       { path: 'session.maintenance.maxEntries', label: '会话条目上限', type: 'number', integer: true, min: 1 },
       { path: 'agents.defaults.contextTokens', label: '默认上下文 Token 预算', type: 'number', integer: true, min: 1 },
       { path: 'agents.defaults.maxConcurrent', label: '最大并发', type: 'number', integer: true, min: 1 },
       { path: 'agents.defaults.compaction.maxHistoryShare', label: '历史占比上限', type: 'number', min: 0, max: 1 },
+      { path: 'agents.defaults.heartbeat.ackMaxChars', label: 'Heartbeat 最大确认字符数', type: 'number', integer: true, min: 0 },
       { path: 'gateway.port', label: '端口', type: 'number', integer: true, min: 1, max: 65535 },
       { path: 'session.agentToAgent.maxPingPongTurns', label: '最大来回委托轮次', type: 'number', integer: true, min: 1 },
+      { path: 'cron.maxConcurrentRuns', label: 'Cron 最大并发任务', type: 'number', integer: true, min: 1 },
+      { path: 'cron.retry.maxAttempts', label: 'Cron 最大重试次数', type: 'number', integer: true, min: 1 },
+      { path: 'cron.failureAlert.after', label: 'Cron 失败告警阈值', type: 'number', integer: true, min: 1 },
+      { path: 'cron.failureAlert.cooldownMs', label: 'Cron 失败告警冷却毫秒', type: 'number', integer: true, min: 0 },
+      { path: 'cron.runLog.maxBytes', label: 'Cron 运行日志最大字节', type: 'number', integer: true, min: 1 },
+      { path: 'cron.runLog.keepLines', label: 'Cron 运行日志保留行数', type: 'number', integer: true, min: 1 },
     ];
     for (const field of numericFields) {
       const error = validateNumericFieldValue(readConfigValue(clone, field.path), field);
@@ -1300,6 +1403,36 @@ export default function SystemConfig() {
             { path: 'hooks.enabled', label: '启用Hooks', type: 'toggle' as const },
             { path: 'hooks.path', label: '基础路径', type: 'text' as const, placeholder: '/hooks' },
             { path: 'hooks.token', label: 'Webhook密钥', type: 'password' as const },
+          ]} getVal={getVal} setVal={setVal} />
+          <CfgSection title="Cron 自动化" icon={RefreshCw} description="配置 OpenClaw 内建调度器与故障治理策略" fields={[
+            { path: 'cron.enabled', label: '启用 Cron', type: 'toggle' as const },
+            { path: 'cron.store', label: '存储路径(可选)', type: 'text' as const, placeholder: '/path/to/cron/jobs.json', help: '留空使用 OpenClaw 默认路径；仅在需要自定义持久化位置时填写。' },
+            { path: 'cron.maxConcurrentRuns', label: '最大并发任务', type: 'number' as const, placeholder: '4', integer: true, min: 1 },
+            { path: 'cron.retry.maxAttempts', label: '最大重试次数', type: 'number' as const, placeholder: '3', integer: true, min: 0 },
+            { path: 'cron.retry.backoffMs', label: '重试退避毫秒数组(JSON)', type: 'text' as const, placeholder: '[30000, 60000, 300000]', help: 'OpenClaw 期望数组；例如 [30000, 60000, 300000]。' },
+            { path: 'cron.webhook', label: 'Cron Webhook 入口', type: 'text' as const, placeholder: 'https://example.com/hooks/cron' },
+            { path: 'cron.webhookToken', label: 'Cron Webhook Token', type: 'password' as const },
+            { path: 'cron.failureAlert.enabled', label: '失败告警', type: 'toggle' as const },
+            { path: 'cron.failureAlert.after', label: '连续失败阈值', type: 'number' as const, placeholder: '1', integer: true, min: 1 },
+            { path: 'cron.failureAlert.cooldownMs', label: '告警冷却毫秒', type: 'number' as const, placeholder: '60000', integer: true, min: 0 },
+            { path: 'cron.failureAlert.mode', label: '告警模式', type: 'select' as const, options: ['announce', 'webhook'] },
+            { path: 'cron.failureAlert.accountId', label: '告警账号(accountId)', type: 'text' as const, placeholder: 'default' },
+            { path: 'cron.failureDestination.mode', label: '默认失败目的地模式', type: 'select' as const, options: ['announce', 'webhook'] },
+            { path: 'cron.failureDestination.channel', label: '默认失败目的地通道', type: 'text' as const, placeholder: 'telegram / feishu / last ...' },
+            { path: 'cron.failureDestination.to', label: '默认失败目的地 to', type: 'text' as const, placeholder: 'oc://channel/ops 或 webhook URL' },
+            { path: 'cron.failureDestination.accountId', label: '默认失败目的地账号(accountId)', type: 'text' as const, placeholder: 'default' },
+            { path: 'cron.runLog.maxBytes', label: '运行日志最大字节', type: 'number' as const, placeholder: '2097152', integer: true, min: 1 },
+            { path: 'cron.runLog.keepLines', label: '运行日志保留行数', type: 'number' as const, placeholder: '2000', integer: true, min: 1 },
+          ]} getVal={getVal} setVal={setVal} />
+          <CfgSection title="Heartbeat 自动化" icon={RefreshCw} description="配置 Agent 默认心跳节奏与投递策略（agents.defaults.heartbeat）" fields={[
+            { path: 'agents.defaults.heartbeat.every', label: '心跳间隔', type: 'text' as const, placeholder: '30m', help: '支持如 30m / 1h / 15m 等持续时间。' },
+            { path: 'agents.defaults.heartbeat.target', label: '心跳目标', type: 'select' as const, options: ['none', 'last', 'telegram', 'whatsapp', 'discord', 'irc', 'googlechat', 'slack', 'signal', 'imessage', 'line', 'feishu', 'wecom', 'qq'], help: 'none=仅自检，last=最近通道，其余为固定通道ID。' },
+            { path: 'agents.defaults.heartbeat.to', label: '固定目标 (to)', type: 'text' as const, placeholder: 'oc://channel/xxx' },
+            { path: 'agents.defaults.heartbeat.accountId', label: '账号标识 (accountId)', type: 'text' as const, placeholder: 'default' },
+            { path: 'agents.defaults.heartbeat.prompt', label: '心跳提示词', type: 'textarea' as const, placeholder: '请做轻量自检并回报关键状态。' },
+            { path: 'agents.defaults.heartbeat.ackMaxChars', label: '最大确认字符数', type: 'number' as const, placeholder: '300', integer: true, min: 0 },
+            { path: 'agents.defaults.heartbeat.lightContext', label: '轻量上下文', type: 'toggle' as const },
+            { path: 'agents.defaults.heartbeat.includeReasoning', label: '包含推理摘要', type: 'toggle' as const },
           ]} getVal={getVal} setVal={setVal} />
           <CfgSection title="命令配置" icon={Terminal} fields={[
             { path: 'commands.native', label: '原生命令', type: 'select' as const, options: ['auto', 'on', 'off'] },
