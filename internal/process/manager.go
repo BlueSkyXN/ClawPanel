@@ -394,6 +394,20 @@ func (m *Manager) GetStatus() Status {
 	return s
 }
 
+// GatewayPortInt returns the resolved OpenClaw gateway port as an integer.
+// It reads from openclaw.json first, falling back to the edition default.
+// Returns 0 when the receiver is nil.
+func (m *Manager) GatewayPortInt() int {
+	if m == nil {
+		return 0
+	}
+	s := m.getGatewayPort()
+	if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && v > 0 {
+		return v
+	}
+	return 0
+}
+
 // GetLogs 获取日志
 func (m *Manager) GetLogs(n int) []string {
 	m.logMu.RLock()
