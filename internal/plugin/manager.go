@@ -26,7 +26,7 @@ const (
 	RegistryFallbackURLCN = "https://gitee.com/zhaoxinyi02/ClawPanel-Plugins/raw/main/registry.json"
 )
 
-var officialFeishuPluginIDs = []string{"openclaw-lark", "feishu-openclaw-plugin"}
+var officialFeishuPluginIDs = []string{"openclaw-lark"}
 
 // PluginMeta represents a plugin's metadata (plugin.json)
 type PluginMeta struct {
@@ -827,7 +827,7 @@ func (m *Manager) scanLiteRuntimePlugins() {
 			entries = currentEntries
 		}
 	}
-	for _, pluginID := range []string{"telegram", "feishu", "openclaw-lark", "feishu-openclaw-plugin", "qq", "qqbot", "dingtalk", "wecom", "wecom-app"} {
+	for _, pluginID := range []string{"telegram", "feishu", "openclaw-lark", "qq", "qqbot", "dingtalk", "wecom", "wecom-app"} {
 		pluginDir := filepath.Join(appDir, "extensions", pluginID)
 		meta, err := m.readPluginMeta(pluginDir)
 		if err != nil {
@@ -1284,7 +1284,7 @@ func cleanupChannelConfigForPlugin(ocConfig map[string]interface{}, pluginID str
 		return false
 	}
 	switch pluginID {
-	case "openclaw-lark", "feishu-openclaw-plugin":
+	case "openclaw-lark":
 		if !stillInstalled("feishu") {
 			delete(channels, "feishu")
 		}
