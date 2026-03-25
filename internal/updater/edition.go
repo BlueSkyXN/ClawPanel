@@ -64,7 +64,7 @@ func (c editionConfig) binaryAssetName(version, platformKey string) string {
 		prefix = "clawpanel-lite"
 	}
 	name := fmt.Sprintf("%s-v%s-%s", prefix, version, strings.ReplaceAll(platformKey, "_", "-"))
-	if runtime.GOOS == "windows" || strings.HasPrefix(platformKey, "windows_") {
+	if strings.HasPrefix(platformKey, "windows_") {
 		name += ".exe"
 	}
 	return name
