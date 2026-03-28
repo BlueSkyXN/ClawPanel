@@ -436,7 +436,7 @@ func (m *Manager) InstallWithProgress(pluginID string, source string, logf func(
 				return fmt.Errorf("Git 安装失败: %v", err)
 			}
 		}
-	} else if strings.HasSuffix(downloadURL, ".zip") || strings.HasSuffix(downloadURL, ".tar.gz") {
+	} else if strings.HasSuffix(downloadURL, ".zip") || strings.HasSuffix(downloadURL, ".tar.gz") || strings.HasSuffix(downloadURL, ".tgz") {
 		// Download archive
 		if err := m.installFromArchive(downloadURL, pluginDir); err != nil {
 			os.RemoveAll(pluginDir)

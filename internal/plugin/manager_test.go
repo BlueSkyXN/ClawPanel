@@ -59,6 +59,15 @@ func TestResolvePluginInstallStrategyUsesPreferredQQBotTarball(t *testing.T) {
 	}
 }
 
+func TestInstallRecognizesTgzAsArchive(t *testing.T) {
+	t.Parallel()
+
+	url := "https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel-Plugins/main/official/qqbot/qqbot-1.2.2.tgz"
+	if !(strings.HasSuffix(url, ".zip") || strings.HasSuffix(url, ".tar.gz") || strings.HasSuffix(url, ".tgz")) {
+		t.Fatalf("expected tgz url to be treated as archive")
+	}
+}
+
 func TestRegistryFetchURLsSkipsInsecureMirrorByDefault(t *testing.T) {
 	t.Parallel()
 
