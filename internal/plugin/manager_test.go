@@ -1001,7 +1001,7 @@ func TestInstallFromGitReportsMissingGitClearly(t *testing.T) {
 	}
 
 	m := &Manager{}
-	err := m.installFromGit("https://github.com/example/repo.git", filepath.Join(t.TempDir(), "plugin"))
+	err := m.installFromGit("https://example.invalid/repo.git", filepath.Join(t.TempDir(), "plugin"))
 	if err == nil || !strings.Contains(err.Error(), "未检测到 Git，请先安装 Git 后再重试") {
 		t.Fatalf("expected missing git hint, got %v", err)
 	}
@@ -1029,11 +1029,39 @@ func TestInstallFromGitRetriesTransientTLSFailure(t *testing.T) {
 	}
 
 	m := &Manager{}
-	if err := m.installFromGit("https://github.com/example/repo.git", filepath.Join(t.TempDir(), "plugin")); err != nil {
+	if err := m.installFromGit("https://example.invalid/repo.git", filepath.Join(t.TempDir(), "plugin")); err != nil {
 		t.Fatalf("expected transient clone failure to recover, got %v", err)
 	}
 	if attempts != 3 {
 		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestRepoArchiveURLsForGitHub(t *testing.T) {
+	urls := repoArchiveURLs("https://github.com/zhaoxinyi02/ClawPanel-Plugins.git")
+	if len(urls) < 2 {
+		t.Fatalf("expected github archive candidates, got %#v", urls)
+	}
+	if urls[0] != "https://codeload.github.com/zhaoxinyi02/ClawPanel-Plugins/zip/refs/heads/main" {
+		t.Fatalf("unexpected primary archive url: %q", urls[0])
+	}
+}
+
+func TestFlattenExtractedArchiveRootMovesSingleTopLevelDir(t *testing.T) {
+	root := t.TempDir()
+	archiveRoot := filepath.Join(root, "repo-main")
+	if err := os.MkdirAll(filepath.Join(archiveRoot, "official", "qqbot"), 0o755); err != nil {
+		t.Fatalf("mkdir archive root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveRoot, "official", "qqbot", "plugin.json"), []byte(`{"id":"qqbot"}`), 0o644); err != nil {
+		t.Fatalf("write plugin file: %v", err)
+	}
+
+	if err := flattenExtractedArchiveRoot(root); err != nil {
+		t.Fatalf("flatten archive root failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "official", "qqbot", "plugin.json")); err != nil {
+		t.Fatalf("expected flattened plugin file, got %v", err)
 	}
 }
 

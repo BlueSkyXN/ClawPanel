@@ -1324,6 +1324,13 @@ func (m *Manager) installFromNpm(pkgName string) error {
 }
 
 func (m *Manager) installFromGit(gitURL, dest string) error {
+	for _, archiveURL := range repoArchiveURLs(gitURL) {
+		if err := m.installFromArchive(archiveURL, dest); err == nil {
+			return nil
+		}
+		_ = os.RemoveAll(dest)
+	}
+
 	if _, err := gitLookPath("git"); err != nil {
 		return fmt.Errorf("未检测到 Git，请先安装 Git 后再重试")
 	}
@@ -1352,6 +1359,26 @@ func (m *Manager) installFromGit(gitURL, dest string) error {
 		return fmt.Errorf("网络异常，Git 拉取失败（已自动重试）: %s: %s", lastErr, msg)
 	}
 	return fmt.Errorf("%s: %s", lastErr, msg)
+}
+
+func repoArchiveURLs(repoURL string) []string {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(repoURL, ".git"))
+	switch {
+	case strings.HasPrefix(trimmed, "https://github.com/"):
+		repoPath := strings.TrimPrefix(trimmed, "https://github.com/")
+		return []string{
+			"https://codeload.github.com/" + repoPath + "/zip/refs/heads/main",
+			"https://codeload.github.com/" + repoPath + "/zip/refs/heads/master",
+		}
+	case strings.HasPrefix(trimmed, "https://gitee.com/"):
+		repoPath := strings.TrimPrefix(trimmed, "https://gitee.com/")
+		return []string{
+			"https://gitee.com/" + repoPath + "/repository/archive/main.zip",
+			"https://gitee.com/" + repoPath + "/repository/archive/master.zip",
+		}
+	default:
+		return nil
+	}
 }
 
 func runGitClone(gitURL, dest string) ([]byte, error) {
@@ -1431,7 +1458,38 @@ func (m *Manager) installFromArchive(url, dest string) error {
 		}
 	}
 
+	if err := flattenExtractedArchiveRoot(dest); err != nil {
+		return err
+	}
 	return nil
+}
+
+func flattenExtractedArchiveRoot(dest string) error {
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		return err
+	}
+	var dirs []os.DirEntry
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirs = append(dirs, entry)
+		}
+	}
+	if len(entries) != 1 || len(dirs) != 1 {
+		return nil
+	}
+
+	rootDir := filepath.Join(dest, dirs[0].Name())
+	children, err := os.ReadDir(rootDir)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if err := os.Rename(filepath.Join(rootDir, child.Name()), filepath.Join(dest, child.Name())); err != nil {
+			return err
+		}
+	}
+	return os.Remove(rootDir)
 }
 
 // copyDir copies a directory recursively
