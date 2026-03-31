@@ -315,7 +315,13 @@ function simpleMarkdown(md: string): string {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code class="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs">$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-indigo-600 hover:underline">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m: string, text: string, url: string) => {
+      const trimmedUrl = url.trim().toLowerCase();
+      if (trimmedUrl.startsWith('javascript:') || trimmedUrl.startsWith('data:') || trimmedUrl.startsWith('vbscript:')) {
+        return text;
+      }
+      return `<a href="${url}" target="_blank" rel="noopener" class="text-indigo-600 hover:underline">${text}</a>`;
+    })
     .replace(/^---+$/gm, '<hr class="my-4 border-gray-200 dark:border-gray-700" />')
     .replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>')
     .replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>')
