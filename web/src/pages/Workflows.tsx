@@ -320,7 +320,9 @@ function simpleMarkdown(md: string): string {
       if (trimmedUrl.startsWith('javascript:') || trimmedUrl.startsWith('data:') || trimmedUrl.startsWith('vbscript:')) {
         return text;
       }
-      return `<a href="${url}" target="_blank" rel="noopener" class="text-indigo-600 hover:underline">${text}</a>`;
+      const safeUrl = url.replace(/"/g, '&quot;');
+      const safeText = text.replace(/"/g, '&quot;');
+      return `<a href="${safeUrl}" target="_blank" rel="noopener" class="text-indigo-600 hover:underline">${safeText}</a>`;
     })
     .replace(/^---+$/gm, '<hr class="my-4 border-gray-200 dark:border-gray-700" />')
     .replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>')

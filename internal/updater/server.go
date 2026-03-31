@@ -516,7 +516,9 @@ func (s *Server) handleUploadUpdate(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	os.Chmod(tmpFile, 0755)
+	if err := os.Chmod(tmpFile, 0755); err != nil {
+		log.Printf("[Updater] chmod 失败: %v", err)
+	}
 
 	s.mu.Lock()
 	s.state = UpdateState{
