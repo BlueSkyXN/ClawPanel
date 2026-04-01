@@ -12,11 +12,13 @@ function headers() {
 
 async function get(path: string) {
   const res = await fetch(BASE + path, { headers: headers() });
+  if (res.status === 401) throw new Error('Unauthorized');
   return res.json();
 }
 
 async function post(path: string, body?: any) {
   const res = await fetch(BASE + path, { method: 'POST', headers: headers(), body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401) throw new Error('Unauthorized');
   return res.json();
 }
 
@@ -25,17 +27,20 @@ async function postLong(path: string, body?: any, timeoutMs = 120000) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(BASE + path, { method: 'POST', headers: headers(), body: body ? JSON.stringify(body) : undefined, signal: controller.signal });
+    if (res.status === 401) throw new Error('Unauthorized');
     return res.json();
   } finally { clearTimeout(timer); }
 }
 
 async function put(path: string, body?: any) {
   const res = await fetch(BASE + path, { method: 'PUT', headers: headers(), body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401) throw new Error('Unauthorized');
   return res.json();
 }
 
 async function del(path: string) {
   const res = await fetch(BASE + path, { method: 'DELETE', headers: headers() });
+  if (res.status === 401) throw new Error('Unauthorized');
   return res.json();
 }
 

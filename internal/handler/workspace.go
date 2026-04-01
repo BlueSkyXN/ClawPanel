@@ -214,12 +214,23 @@ func WorkspaceUpload(cfg *config.Config) gin.HandlerFunc {
 		}
 		uploaded := []string{}
 		for _, f := range files {
-			dst := filepath.Join(targetDir, f.Filename)
+			// Sanitize filename: use only the base name and reject path traversal
+			safeName := filepath.Base(f.Filename)
+			if safeName == "." || safeName == ".." || safeName == string(filepath.Separator) {
+				c.JSON(400, gin.H{"ok": false, "error": "Invalid filename"})
+				return
+			}
+			dst := filepath.Join(targetDir, safeName)
+			dstAbs, _ := filepath.Abs(dst)
+			if !strings.HasPrefix(dstAbs, wsAbs) {
+				c.JSON(400, gin.H{"ok": false, "error": "Invalid filename"})
+				return
+			}
 			if err := c.SaveUploadedFile(f, dst); err != nil {
 				c.JSON(500, gin.H{"ok": false, "error": err.Error()})
 				return
 			}
-			uploaded = append(uploaded, f.Filename)
+			uploaded = append(uploaded, safeName)
 		}
 		c.JSON(200, gin.H{"ok": true, "files": uploaded})
 	}
@@ -298,7 +309,9 @@ func WorkspaceDownload(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(404, gin.H{"ok": false, "error": "File not found"})
 			return
 		}
-		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(filePath)))
+		// Sanitize filename for Content-Disposition header to prevent header injection
+		safeDlName := strings.NewReplacer(`"`, `\"`, "\r", "", "\n", "").Replace(filepath.Base(filePath))
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, safeDlName))
 		c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
 		c.File(full)
 	}

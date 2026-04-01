@@ -72,7 +72,17 @@ function simpleMarkdown(md: string): string {
     // Inline code
     .replace(/`([^`]+)`/g, '<code class="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs">$1</code>')
     // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-indigo-600 hover:underline">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m: string, text: string, url: string) => {
+      // Reject dangerous URL schemes to prevent XSS
+      const trimmedUrl = url.trim().toLowerCase();
+      if (trimmedUrl.startsWith('javascript:') || trimmedUrl.startsWith('data:') || trimmedUrl.startsWith('vbscript:')) {
+        return text;
+      }
+      // Escape quotes in URL and text to prevent attribute breakout
+      const safeUrl = url.replace(/"/g, '&quot;');
+      const safeText = text.replace(/"/g, '&quot;');
+      return `<a href="${safeUrl}" target="_blank" rel="noopener" class="text-indigo-600 hover:underline">${safeText}</a>`;
+    })
     // Horizontal rule
     .replace(/^---+$/gm, '<hr class="my-4 border-gray-200 dark:border-gray-700" />')
     // Unordered list items

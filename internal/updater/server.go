@@ -245,6 +245,9 @@ func (s *Server) startDirectChild(bin, logFile string) {
 		cmd.Stderr = lf
 	}
 	if err := cmd.Start(); err != nil {
+		if lf != nil {
+			lf.Close()
+		}
 		log.Printf("[Updater] 启动独立更新子进程失败: %v", err)
 		return
 	}
@@ -498,9 +501,24 @@ func (s *Server) handleUploadUpdate(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	io.Copy(out, file)
-	out.Close()
-	os.Chmod(tmpFile, 0755)
+	if _, err := io.Copy(out, file); err != nil {
+		out.Close()
+		os.Remove(tmpFile)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": false, "error": "写入文件失败: " + err.Error(),
+		})
+		return
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmpFile)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": false, "error": "保存文件失败: " + err.Error(),
+		})
+		return
+	}
+	if err := os.Chmod(tmpFile, 0755); err != nil {
+		log.Printf("[Updater] chmod 失败: %v", err)
+	}
 
 	s.mu.Lock()
 	s.state = UpdateState{
